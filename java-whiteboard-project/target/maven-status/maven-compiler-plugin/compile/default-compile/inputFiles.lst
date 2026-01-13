@@ -1,0 +1,8 @@
+/Users/chandu/Project/github/local-canvas-collab-main/java-whiteboard-project/src/main/java/com/whiteboard/util/DatabaseConnection.java
+/Users/chandu/Project/github/local-canvas-collab-main/java-whiteboard-project/src/main/java/com/whiteboard/dao/UserDAO.java
+/Users/chandu/Project/github/local-canvas-collab-main/java-whiteboard-project/src/main/java/com/whiteboard/util/AuthenticationUtil.java
+/Users/chandu/Project/github/local-canvas-collab-main/java-whiteboard-project/src/main/java/com/whiteboard/websocket/WhiteboardEndpoint.java
+/Users/chandu/Project/github/local-canvas-collab-main/java-whiteboard-project/src/main/java/com/whiteboard/model/User.java
+/Users/chandu/Project/github/local-canvas-collab-main/java-whiteboard-project/src/main/java/com/whiteboard/model/DrawingEvent.java
+/Users/chandu/Project/github/local-canvas-collab-main/java-whiteboard-project/src/main/java/com/whiteboard/dao/DrawingEventDAO.java
+/Users/chandu/Project/github/local-canvas-collab-main/java-whiteboard-project/src/main/java/com/whiteboard/model/Room.java

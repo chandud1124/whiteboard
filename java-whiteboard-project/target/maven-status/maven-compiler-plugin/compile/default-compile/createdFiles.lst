@@ -1,0 +1,8 @@
+com/whiteboard/util/DatabaseConnection.class
+com/whiteboard/model/User.class
+com/whiteboard/model/DrawingEvent.class
+com/whiteboard/model/Room.class
+com/whiteboard/util/AuthenticationUtil.class
+com/whiteboard/dao/DrawingEventDAO.class
+com/whiteboard/dao/UserDAO.class
+com/whiteboard/websocket/WhiteboardEndpoint.class
