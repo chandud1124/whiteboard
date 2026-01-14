@@ -37,6 +37,7 @@ const Whiteboard = () => {
   const [cursorPos, setCursorPos] = useState<Point>({ x: 0, y: 0 });
   const [showMinimap, setShowMinimap] = useState(true);
   const minimapRef = useRef<HTMLCanvasElement>(null);
+  const [eraserCursorPos, setEraserCursorPos] = useState<Point>({ x: 0, y: 0 });
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -135,7 +136,7 @@ const Whiteboard = () => {
     const container = containerRef.current;
     if (!canvas || !container) return;
 
-    const imageData = canvas.getContext("2d")?.getImageData(0, 0, canvas.width, canvas.height);
+    const imageData = canvas.getContext("2d", { willReadFrequently: true })?.getImageData(0, 0, canvas.width, canvas.height);
     
     // Use full container dimensions
     const width = container.clientWidth;
@@ -144,7 +145,7 @@ const Whiteboard = () => {
     canvas.width = width;
     canvas.height = height;
     
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
     if (ctx) {
       ctx.fillStyle = "white";
       ctx.fillRect(0, 0, width, height);
@@ -160,7 +161,7 @@ const Whiteboard = () => {
 
   const saveToHistory = () => {
     const canvas = canvasRef.current;
-    const ctx = canvas?.getContext("2d");
+    const ctx = canvas?.getContext("2d", { willReadFrequently: true });
     if (!ctx || !canvas) return;
 
     const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -347,7 +348,8 @@ const Whiteboard = () => {
     if (tool === "eraser") {
       const rect = canvasRef.current?.getBoundingClientRect();
       if (rect) {
-        setCursorPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+        // Store the absolute position relative to viewport
+        setEraserCursorPos({ x: e.clientX, y: e.clientY });
       }
     }
 
@@ -423,7 +425,7 @@ const Whiteboard = () => {
 
   const redrawCanvas = () => {
     const canvas = canvasRef.current;
-    const ctx = canvas?.getContext("2d");
+    const ctx = canvas?.getContext("2d", { willReadFrequently: true });
     if (!ctx || !canvas || historyIndex < 0) return;
 
     const currentImage = history[historyIndex];
@@ -448,7 +450,7 @@ const Whiteboard = () => {
     const minimap = minimapRef.current;
     if (!canvas || !minimap) return;
 
-    const minimapCtx = minimap.getContext("2d");
+    const minimapCtx = minimap.getContext("2d", { willReadFrequently: true });
     if (!minimapCtx) return;
 
     const scale = 0.15; // Minimap scale
@@ -471,7 +473,7 @@ const Whiteboard = () => {
 
   const restoreFromHistory = () => {
     const canvas = canvasRef.current;
-    const ctx = canvas?.getContext("2d");
+    const ctx = canvas?.getContext("2d", { willReadFrequently: true });
     if (!ctx || !canvas || historyIndex < 0) return;
 
     const imageData = history[historyIndex];
@@ -894,8 +896,8 @@ const Whiteboard = () => {
               width: strokeWidth * 2 * zoom,
               height: strokeWidth * 2 * zoom,
               transform: "translate(-50%, -50%)",
-              left: "var(--mouse-x)",
-              top: "var(--mouse-y)",
+              left: eraserCursorPos.x,
+              top: eraserCursorPos.y,
             }}
           />
         )}
