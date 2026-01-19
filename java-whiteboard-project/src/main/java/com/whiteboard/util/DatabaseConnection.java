@@ -13,7 +13,7 @@ public class DatabaseConnection {
     // Database configuration - UPDATE THESE VALUES
     private static final String DB_URL = "jdbc:mysql://localhost:3306/whiteboard_db";
     private static final String DB_USER = "root";
-    private static final String DB_PASSWORD = "root"; // Updated to match .env
+    private static final String DB_PASSWORD = ""; // No password for local development
     
     // Connection pool settings
     private static final String DRIVER_CLASS = "com.mysql.cj.jdbc.Driver";

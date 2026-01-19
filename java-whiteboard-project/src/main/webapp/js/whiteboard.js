@@ -11,7 +11,7 @@
     // Configuration
     // ========================================
     const CONFIG = {
-        WS_URL: 'ws://localhost:5173/whiteboard/whiteboard',
+        WS_URL: 'ws://localhost:8082/whiteboard/whiteboard',
         RECONNECT_DELAY: 3000,
         MAX_RECONNECT_ATTEMPTS: 5,
         PING_INTERVAL: 30000
@@ -275,21 +275,22 @@
     }
 
     function resizeCanvas() {
-        // Infinite canvas - very large fixed size
-        const infiniteWidth = 10000;
-        const infiniteHeight = 10000;
+        const container = elements.canvasContainer;
+        
+        // Fixed canvas size for scrolling
+        const width = 2000;
+        const height = 1500;
 
         // Save current canvas content
         const imageData = state.ctx ? state.ctx.getImageData(0, 0, state.canvas.width, state.canvas.height) : null;
 
-        // Set infinite canvas size
-        state.canvas.width = infiniteWidth;
-        state.canvas.height = infiniteHeight;
+        // Set fixed canvas size
+        state.canvas.width = width;
+        state.canvas.height = height;
 
-        // Update container to match canvas size
-        const container = elements.canvasContainer;
-        container.style.width = infiniteWidth + 'px';
-        container.style.height = infiniteHeight + 'px';
+        // Set container to show scrollbars
+        container.style.width = '100%';
+        container.style.height = '100%';
 
         // Restore canvas settings
         state.ctx.lineCap = 'round';
@@ -297,8 +298,7 @@
         
         // Restore content if exists
         if (imageData) {
-            // If resizing, we need to handle the content differently
-            // For now, just clear and let history reload
+            // For fixed size, just clear for now
             state.ctx.fillStyle = '#FFFFFF';
             state.ctx.fillRect(0, 0, state.canvas.width, state.canvas.height);
         } else {
@@ -884,7 +884,14 @@
                     break;
                     
                 case 'error':
-                    showNotification(data.message, 'error');
+                    // Handle auth errors in modals
+                    if (!elements.loginModal.classList.contains('hidden')) {
+                        showAuthMessage(elements.loginMessage, data.message, 'error');
+                    } else if (!elements.registerModal.classList.contains('hidden')) {
+                        showAuthMessage(elements.registerMessage, data.message, 'error');
+                    } else {
+                        showNotification(data.message, 'error');
+                    }
                     break;
                     
                 default:
@@ -1573,12 +1580,18 @@
         const input = document.createElement('input');
         input.type = 'text';
         input.style.position = 'absolute';
-        input.style.left = (x + state.panX) + 'px';
-        input.style.top = (y + state.panY) + 'px';
+        
+        // Position relative to canvas
+        const canvasRect = state.canvas.getBoundingClientRect();
+        input.style.left = (canvasRect.left + x) + 'px';
+        input.style.top = (canvasRect.top + y) + 'px';
+        
         input.style.fontSize = state.strokeWidth * 4 + 'px';
         input.style.color = state.currentColor;
-        input.style.border = 'none';
-        input.style.backgroundColor = 'transparent';
+        input.style.border = '1px solid #ccc';
+        input.style.backgroundColor = 'rgba(255, 255, 255, 0.9)';
+        input.style.padding = '2px 4px';
+        input.style.minWidth = '100px';
         input.style.fontFamily = 'monospace';
         input.style.zIndex = '1000';
         

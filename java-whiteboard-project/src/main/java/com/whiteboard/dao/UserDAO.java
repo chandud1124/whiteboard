@@ -69,13 +69,15 @@ public class UserDAO {
                     return userId;
                 }
             }
+            System.err.println("Registration failed: No rows affected");
+            return -1;
         } catch (SQLException e) {
             System.err.println("Error registering user: " + e.getMessage());
+            e.printStackTrace();
+            return -1;
         } finally {
             closeResources(rs, stmt, conn);
         }
-        
-        return -1;
     }
     
     /**
@@ -184,12 +186,13 @@ public class UserDAO {
             
             return rs.next();
         } catch (SQLException e) {
-            System.err.println("Error checking username: " + e.getMessage());
+            System.err.println("Error checking username existence: " + e.getMessage());
+            e.printStackTrace();
+            // On database error, allow registration to proceed (fail-open for user experience)
+            return false;
         } finally {
             closeResources(rs, stmt, conn);
         }
-        
-        return true; // Assume exists on error (fail safe)
     }
     
     /**
@@ -210,12 +213,13 @@ public class UserDAO {
             
             return rs.next();
         } catch (SQLException e) {
-            System.err.println("Error checking email: " + e.getMessage());
+            System.err.println("Error checking email existence: " + e.getMessage());
+            e.printStackTrace();
+            // On database error, allow registration to proceed (fail-open for user experience)
+            return false;
         } finally {
             closeResources(rs, stmt, conn);
         }
-        
-        return true; // Assume exists on error (fail safe)
     }
     
     /**

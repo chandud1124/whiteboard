@@ -6,6 +6,7 @@ import com.whiteboard.model.DrawingEvent;
 import com.whiteboard.model.Room;
 import com.whiteboard.model.User;
 import com.whiteboard.util.AuthenticationUtil;
+import com.whiteboard.util.DatabaseConnection;
 
 import javax.websocket.*;
 import javax.websocket.server.ServerEndpoint;
@@ -46,6 +47,22 @@ public class WhiteboardEndpoint {
     
     // Enable/disable database persistence (set to false if DB not configured)
     private static final boolean PERSIST_TO_DATABASE = true;
+    
+    // Check database connectivity on class load
+    static {
+        if (PERSIST_TO_DATABASE) {
+            try {
+                boolean dbConnected = DatabaseConnection.testConnection();
+                if (dbConnected) {
+                    System.out.println("Database connection test successful");
+                } else {
+                    System.err.println("WARNING: Database connection test failed - some features may not work");
+                }
+            } catch (Exception e) {
+                System.err.println("ERROR: Database connection test failed: " + e.getMessage());
+            }
+        }
+    }
     
     /**
      * Called when a new WebSocket connection is opened
@@ -191,37 +208,43 @@ public class WhiteboardEndpoint {
         
         // Validation
         if (username == null || username.isEmpty()) {
-            sendError(session, "Username is required");
+            sendAuthError(session, "registerFailed", "Username is required");
             return;
         }
         if (!AuthenticationUtil.isValidUsername(username)) {
-            sendError(session, "Username must be 3-50 characters (alphanumeric and underscore only)");
+            sendAuthError(session, "registerFailed", "Username must be 3-50 characters (alphanumeric and underscore only)");
             return;
         }
         if (email == null || email.isEmpty()) {
-            sendError(session, "Email is required");
+            sendAuthError(session, "registerFailed", "Email is required");
             return;
         }
         if (!AuthenticationUtil.isValidEmail(email)) {
-            sendError(session, "Invalid email format");
+            sendAuthError(session, "registerFailed", "Invalid email format");
             return;
         }
         if (password == null || password.isEmpty()) {
-            sendError(session, "Password is required");
+            sendAuthError(session, "registerFailed", "Password is required");
             return;
         }
         if (!AuthenticationUtil.isValidPassword(password)) {
-            sendError(session, "Password must be at least 6 characters");
+            sendAuthError(session, "registerFailed", "Password must be at least 6 characters");
+            return;
+        }
+        
+        // Check database connectivity
+        if (!DatabaseConnection.testConnection()) {
+            sendAuthError(session, "registerFailed", "Database connection error. Please try again later.");
             return;
         }
         
         // Check if username/email already exists
         if (userDAO.usernameExists(username)) {
-            sendError(session, "Username already exists");
+            sendAuthError(session, "registerFailed", "Username already exists");
             return;
         }
         if (userDAO.emailExists(email)) {
-            sendError(session, "Email already registered");
+            sendAuthError(session, "registerFailed", "Email already registered");
             return;
         }
         
@@ -242,7 +265,7 @@ public class WhiteboardEndpoint {
                 System.err.println("Error sending register response: " + e.getMessage());
             }
         } else {
-            sendError(session, "Registration failed. Please try again.");
+            sendAuthError(session, "registerFailed", "Registration failed. Please try again.");
         }
     }
     
@@ -254,18 +277,24 @@ public class WhiteboardEndpoint {
         String password = extractField(message, "password");
         
         if (username == null || username.isEmpty()) {
-            sendError(session, "Username is required");
+            sendAuthError(session, "loginFailed", "Username is required");
             return;
         }
         if (password == null || password.isEmpty()) {
-            sendError(session, "Password is required");
+            sendAuthError(session, "loginFailed", "Password is required");
+            return;
+        }
+        
+        // Check database connectivity
+        if (!DatabaseConnection.testConnection()) {
+            sendAuthError(session, "loginFailed", "Database connection error. Please try again later.");
             return;
         }
         
         // Find user by username
         Optional<User> userOpt = userDAO.findByUsername(username);
         if (!userOpt.isPresent()) {
-            sendError(session, "Invalid username or password");
+            sendAuthError(session, "loginFailed", "Invalid username or password");
             return;
         }
         
@@ -273,7 +302,7 @@ public class WhiteboardEndpoint {
         
         // Verify password
         if (!AuthenticationUtil.verifyPassword(password, user.getPasswordHash())) {
-            sendError(session, "Invalid username or password");
+            sendAuthError(session, "loginFailed", "Invalid username or password");
             return;
         }
         
@@ -797,6 +826,15 @@ public class WhiteboardEndpoint {
             session.getBasicRemote().sendText(error);
         } catch (IOException e) {
             System.err.println("Error sending error message: " + e.getMessage());
+        }
+    }
+    
+    private void sendAuthError(Session session, String errorType, String errorMessage) {
+        try {
+            String error = String.format("{\"type\":\"%s\",\"message\":\"%s\"}", errorType, errorMessage);
+            session.getBasicRemote().sendText(error);
+        } catch (IOException e) {
+            System.err.println("Error sending auth error message: " + e.getMessage());
         }
     }
     
