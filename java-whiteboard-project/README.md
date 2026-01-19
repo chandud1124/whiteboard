@@ -34,50 +34,44 @@ java-whiteboard-project/
 
 ## Prerequisites
 
-1. **Java JDK 8+** - [Download](https://adoptium.net/)
+1. **Java JDK 17+** - [Download](https://adoptium.net/)
 2. **Apache Tomcat 9+** - [Download](https://tomcat.apache.org/download-90.cgi)
 3. **MySQL 8.0+** - [Download](https://dev.mysql.com/downloads/mysql/)
-4. **MySQL JDBC Driver** - [Download](https://dev.mysql.com/downloads/connector/j/)
+4. **Maven 3.6+** - [Download](https://maven.apache.org/download.cgi)
 
 ## Setup Instructions
 
 ### Step 1: Set Up MySQL Database
 
 1. Start MySQL server
-2. Log in to MySQL:
+2. Create the database and run the schema:
    ```bash
-   mysql -u root -p
-   ```
-3. Run the schema script:
-   ```sql
-   SOURCE /path/to/sql/schema.sql;
+   mysql -u root -p < sql/schema.sql
    ```
 
-### Step 2: Configure Tomcat
+### Step 2: Build and Deploy
 
-1. Copy `mysql-connector-java-8.x.x.jar` to `TOMCAT_HOME/lib/`
-2. Copy the WebSocket API JAR to `TOMCAT_HOME/lib/` (usually included)
-
-### Step 3: Deploy the Application
-
-**Option A: Manual Deployment**
-1. Compile Java files with required dependencies
-2. Create a WAR file structure
-3. Copy to `TOMCAT_HOME/webapps/whiteboard/`
-
-**Option B: Using Maven**
-1. Run `mvn clean package`
-2. Copy `target/whiteboard.war` to `TOMCAT_HOME/webapps/`
-
-### Step 4: Start the Application
-
-1. Start Tomcat:
+1. Build the project:
    ```bash
-   cd TOMCAT_HOME/bin
-   ./startup.sh    # Linux/Mac
-   startup.bat     # Windows
+   mvn clean package
    ```
-2. Open browser: `http://localhost:8080/whiteboard/`
+
+2. Deploy to Tomcat:
+   ```bash
+   cp target/whiteboard.war /opt/homebrew/opt/tomcat@9/libexec/webapps/
+   ```
+
+### Step 3: Start Tomcat
+
+1. Start Tomcat server:
+   ```bash
+   JAVA_HOME=$(brew --prefix openjdk) /opt/homebrew/opt/tomcat@9/libexec/bin/catalina.sh start
+   ```
+
+2. Access the application:
+   ```
+   http://localhost:8080/whiteboard/
+   ```
 
 ## Features
 

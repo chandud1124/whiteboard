@@ -37,7 +37,7 @@ A **powerful, feature-rich collaborative whiteboard** built with Java/Tomcat bac
 ### Prerequisites
 ```bash
 # Required tools
-- JDK 11+ (openjdk via Homebrew)
+- JDK 17+ (openjdk via Homebrew)
 - Maven 3.6+
 - MySQL 8.0+
 - Tomcat 9.0
@@ -123,7 +123,7 @@ JAVA_HOME=$(brew --prefix openjdk) /opt/homebrew/opt/tomcat@9/libexec/bin/catali
 ## 📊 Architecture
 
 ### Backend
-- **Java 11** with WebSocket (javax.websocket)
+- **Java 17** with WebSocket (javax.websocket)
 - **Tomcat 9** servlet container
 - **MySQL 8** for persistence
 - **JDBC** connection pooling
@@ -218,10 +218,7 @@ Endpoint configured in `WhiteboardEndpoint.java`:
 
 ## 📚 Documentation
 
-- **FEATURES_IMPLEMENTED.md** - Complete 65+ feature list
-- **QUICK_START_GUIDE.md** - Usage guide with workflows
-- **java-whiteboard-project/SETUP_GUIDE.md** - Backend setup
-- **java-whiteboard-project/AUTHENTICATION_GUIDE.md** - Auth system
+See the java-whiteboard-project/README.md for detailed setup and technical information.
 
 ## 📦 Project Structure
 
@@ -238,10 +235,7 @@ whiteboard/
 │   │   └── js/whiteboard.js
 │   ├── sql/schema.sql
 │   └── pom.xml
-├── README.md (this file)
-├── FEATURES_IMPLEMENTED.md
-├── QUICK_START_GUIDE.md
-└── ...other docs
+└── README.md (this file)
 ```
 
 ## 🔐 Security
@@ -300,7 +294,7 @@ Contributions welcome! See CONTRIBUTING.md
 
 ### Version Information
 - **Version**: 1.0.0
-- **Last Updated**: January 14, 2026
+- **Last Updated**: January 19, 2026
 - **Status**: Production Ready
 - **Features Implemented**: 65+
 

@@ -275,22 +275,22 @@
     }
 
     function resizeCanvas() {
-        // Fixed canvas size instead of responsive
-        const fixedWidth = 1200;
-        const fixedHeight = 800;
-        
+        // Infinite canvas - very large fixed size
+        const infiniteWidth = 10000;
+        const infiniteHeight = 10000;
+
         // Save current canvas content
         const imageData = state.ctx ? state.ctx.getImageData(0, 0, state.canvas.width, state.canvas.height) : null;
-        
-        // Set fixed canvas size
-        state.canvas.width = fixedWidth;
-        state.canvas.height = fixedHeight;
-        
+
+        // Set infinite canvas size
+        state.canvas.width = infiniteWidth;
+        state.canvas.height = infiniteHeight;
+
         // Update container to match canvas size
         const container = elements.canvasContainer;
-        container.style.width = fixedWidth + 'px';
-        container.style.height = fixedHeight + 'px';
-        
+        container.style.width = infiniteWidth + 'px';
+        container.style.height = infiniteHeight + 'px';
+
         // Restore canvas settings
         state.ctx.lineCap = 'round';
         state.ctx.lineJoin = 'round';
@@ -1202,7 +1202,10 @@
                 return;
             }
         }
-        
+
+        // Clear canvas when leaving room to remove collaborative content
+        clearCanvasLocal();
+
         sendMessage({ type: 'leaveRoom' });
     }
 
@@ -1363,6 +1366,21 @@
             
             // Only finalize if mouse is still inside canvas (meaning user completed the shape)
             if (isInsideCanvas && (Math.abs(coords.x - state.shapeStart.x) > 5 || Math.abs(coords.y - state.shapeStart.y) > 5)) {
+                // Draw the shape locally immediately
+                if (state.currentTool === 'line') {
+                    drawLine(state.shapeStart.x, state.shapeStart.y, coords.x, coords.y, 
+                            state.currentColor, state.strokeWidth, state.lineStyle);
+                } else if (state.currentTool === 'rectangle') {
+                    drawRectangle(state.shapeStart.x, state.shapeStart.y, coords.x, coords.y,
+                                 state.currentColor, state.strokeWidth, state.shapeConstraint);
+                } else if (state.currentTool === 'circle') {
+                    drawCircle(state.shapeStart.x, state.shapeStart.y, coords.x, coords.y,
+                              state.currentColor, state.strokeWidth, state.shapeConstraint);
+                } else if (state.currentTool === 'arrow') {
+                    drawArrow(state.shapeStart.x, state.shapeStart.y, coords.x, coords.y,
+                             state.currentColor, state.strokeWidth, state.lineStyle);
+                }
+                
                 const shapeData = {
                     type: 'shape',
                     tool: state.currentTool,
@@ -1379,6 +1397,8 @@
                 if (state.socket && state.socket.readyState === WebSocket.OPEN) {
                     state.socket.send(JSON.stringify(shapeData));
                 }
+                
+                saveHistoryState();
             } else {
                 // Cancel shape - restore original canvas state
                 if (state.shapePreviewData) {

@@ -7,8 +7,8 @@
 :root {
     --color-bg: #f8fafc;
     --color-surface: #ffffff;
-    --color-primary: #3b82f6;
-    --color-primary-hover: #2563eb;
+    --color-primary: #0066ff;
+    --color-primary-hover: #0044cc;
     --color-text: #1e293b;
     --color-text-muted: #64748b;
     --color-border: #e2e8f0;
@@ -338,9 +338,9 @@ body {
 }
 
 .tool-btn.icon-only.active {
-    background: var(--color-primary);
-    color: white;
-    border-color: var(--color-primary);
+    background: var(--color-primary) !important;
+    color: white !important;
+    border-color: var(--color-primary) !important;
 }
 
 /* Color Picker Compact */
@@ -352,6 +352,7 @@ body {
     border-radius: 2px;
     cursor: pointer;
     -webkit-appearance: none;
+    appearance: none;
     flex-shrink: 0;
 }
 
@@ -596,7 +597,7 @@ body {
 .canvas-container {
     flex: 1;
     position: relative;
-    overflow: hidden;
+    overflow: auto;
     background: repeating-linear-gradient(
         0deg,
         transparent,
