@@ -34,7 +34,7 @@ java-whiteboard-project/
 
 ## Prerequisites
 
-1. **Java JDK 17+** - [Download](https://adoptium.net/)
+1. **Java JDK 21+** - [Download](https://adoptium.net/)
 2. **Apache Tomcat 9+** - [Download](https://tomcat.apache.org/download-90.cgi)
 3. **MySQL 8.0+** - [Download](https://dev.mysql.com/downloads/mysql/)
 4. **Maven 3.6+** - [Download](https://maven.apache.org/download.cgi)

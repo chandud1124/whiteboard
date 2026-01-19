@@ -37,7 +37,7 @@ A **powerful, feature-rich collaborative whiteboard** built with Java/Tomcat bac
 ### Prerequisites
 ```bash
 # Required tools
-- JDK 17+ (openjdk via Homebrew)
+- JDK 21+ (openjdk via Homebrew)
 - Maven 3.6+
 - MySQL 8.0+
 - Tomcat 9.0
@@ -123,7 +123,7 @@ JAVA_HOME=$(brew --prefix openjdk) /opt/homebrew/opt/tomcat@9/libexec/bin/catali
 ## 📊 Architecture
 
 ### Backend
-- **Java 17** with WebSocket (javax.websocket)
+- **Java 21** with WebSocket (javax.websocket)
 - **Tomcat 9** servlet container
 - **MySQL 8** for persistence
 - **JDBC** connection pooling
