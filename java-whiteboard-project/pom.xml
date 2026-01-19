@@ -77,6 +77,21 @@
                     </webResources>
                 </configuration>
             </plugin>
+
+            <!-- Jetty Maven Plugin for development -->
+            <plugin>
+                <groupId>org.eclipse.jetty</groupId>
+                <artifactId>jetty-maven-plugin</artifactId>
+                <version>11.0.15</version>
+                <configuration>
+                    <webApp>
+                        <contextPath>/whiteboard</contextPath>
+                    </webApp>
+                    <httpConnector>
+                        <port>5173</port>
+                    </httpConnector>
+                </configuration>
+            </plugin>
         </plugins>
     </build>
 

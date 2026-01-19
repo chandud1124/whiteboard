@@ -14,16 +14,20 @@ import java.util.List;
 public class DrawingEventDAO {
     
     private static final String INSERT_EVENT = 
-        "INSERT INTO drawing_events (session_id, x1, y1, x2, y2, color, tool, stroke_width) " +
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+        "INSERT INTO drawing_events (session_id, room_code, username, x1, y1, x2, y2, color, tool, stroke_width) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
     
     private static final String SELECT_ALL_EVENTS = 
-        "SELECT id, session_id, x1, y1, x2, y2, color, tool, stroke_width, timestamp " +
+        "SELECT id, session_id, room_code, username, x1, y1, x2, y2, color, tool, stroke_width, timestamp " +
         "FROM drawing_events ORDER BY timestamp ASC";
     
     private static final String SELECT_RECENT_EVENTS = 
-        "SELECT id, session_id, x1, y1, x2, y2, color, tool, stroke_width, timestamp " +
+        "SELECT id, session_id, room_code, username, x1, y1, x2, y2, color, tool, stroke_width, timestamp " +
         "FROM drawing_events ORDER BY timestamp DESC LIMIT ?";
+    
+    private static final String SELECT_EVENTS_BY_ROOM = 
+        "SELECT id, session_id, room_code, username, x1, y1, x2, y2, color, tool, stroke_width, timestamp " +
+        "FROM drawing_events WHERE room_code = ? ORDER BY timestamp ASC";
     
     private static final String DELETE_ALL_EVENTS = 
         "DELETE FROM drawing_events";
@@ -46,13 +50,15 @@ public class DrawingEventDAO {
             stmt = conn.prepareStatement(INSERT_EVENT, Statement.RETURN_GENERATED_KEYS);
             
             stmt.setString(1, event.getSessionId());
-            stmt.setInt(2, event.getX1());
-            stmt.setInt(3, event.getY1());
-            stmt.setInt(4, event.getX2());
-            stmt.setInt(5, event.getY2());
-            stmt.setString(6, event.getColor());
-            stmt.setString(7, event.getTool());
-            stmt.setInt(8, event.getStrokeWidth());
+            stmt.setString(2, event.getRoomCode());
+            stmt.setString(3, event.getUsername());
+            stmt.setInt(4, event.getX1());
+            stmt.setInt(5, event.getY1());
+            stmt.setInt(6, event.getX2());
+            stmt.setInt(7, event.getY2());
+            stmt.setString(8, event.getColor());
+            stmt.setString(9, event.getTool());
+            stmt.setInt(10, event.getStrokeWidth());
             
             int affectedRows = stmt.executeUpdate();
             
@@ -155,6 +161,35 @@ public class DrawingEventDAO {
     }
     
     /**
+     * Get drawing events for a specific room
+     * @param roomCode The room code to filter events by
+     * @return List of DrawingEvents for the room
+     */
+    public List<DrawingEvent> getEventsByRoom(String roomCode) {
+        List<DrawingEvent> events = new ArrayList<>();
+        Connection conn = null;
+        PreparedStatement stmt = null;
+        ResultSet rs = null;
+        
+        try {
+            conn = DatabaseConnection.getConnection();
+            stmt = conn.prepareStatement(SELECT_EVENTS_BY_ROOM);
+            stmt.setString(1, roomCode);
+            rs = stmt.executeQuery();
+            
+            while (rs.next()) {
+                events.add(mapResultSetToEvent(rs));
+            }
+        } catch (SQLException e) {
+            System.err.println("Error fetching events for room " + roomCode + ": " + e.getMessage());
+        } finally {
+            closeResources(rs, stmt, conn);
+        }
+        
+        return events;
+    }
+    
+    /**
      * Get recent drawing events
      * @param limit Maximum number of events to return
      * @return List of recent DrawingEvents
@@ -233,6 +268,8 @@ public class DrawingEventDAO {
         DrawingEvent event = new DrawingEvent();
         event.setId(rs.getLong("id"));
         event.setSessionId(rs.getString("session_id"));
+        event.setRoomCode(rs.getString("room_code"));
+        event.setUsername(rs.getString("username"));
         event.setX1(rs.getInt("x1"));
         event.setY1(rs.getInt("y1"));
         event.setX2(rs.getInt("x2"));

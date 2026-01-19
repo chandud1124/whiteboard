@@ -11,7 +11,7 @@
     // Configuration
     // ========================================
     const CONFIG = {
-        WS_URL: 'ws://localhost:8080/whiteboard/whiteboard',
+        WS_URL: 'ws://localhost:5173/whiteboard/whiteboard',
         RECONNECT_DELAY: 3000,
         MAX_RECONNECT_ATTEMPTS: 5,
         PING_INTERVAL: 30000
@@ -47,6 +47,34 @@
         currentTool: 'pen',
         currentColor: '#000000',
         strokeWidth: 3,
+        lineStyle: 'solid', // solid, dashed, dotted
+        
+        // Canvas state
+        zoom: 1,
+        panX: 0,
+        panY: 0,
+        showGrid: false,
+        gridSize: 20,
+        snapToGrid: false,
+        
+        // Drawing state for shapes
+        shapeStart: null,
+        shapeConstraint: false, // Shift key held
+        shapePreviewActive: false,
+        shapePreviewData: null, // Canvas data before shape preview
+        
+        // Undo/Redo
+        history: [],
+        historyIndex: -1,
+        maxHistorySize: 50,
+        
+        // Selection
+        selectedElements: [],
+        isSelecting: false,
+        selectionStart: null,
+        
+        // Mini-map
+        showMinimap: true,
         
         // Authentication
         isLoggedIn: false,
@@ -56,7 +84,20 @@
         token: null,
         
         // History
-        isReceivingHistory: false
+        isReceivingHistory: false,
+        
+        // Collaboration - Live cursors
+        userCursors: {},
+        
+        // Chat
+        chatMessages: [],
+        lastMouseX: 0,
+        lastMouseY: 0,
+        cursorSendTimer: null,
+        cursorColors: [
+            '#3B82F6', '#EF4444', '#10B981', '#F59E0B', '#8B5CF6',
+            '#EC4899', '#06B6D4', '#84CC16', '#F97316', '#6366F1'
+        ]
     };
 
     // ========================================
@@ -69,15 +110,46 @@
         connectionStatus: document.getElementById('connectionStatus'),
         userCount: document.getElementById('userCount'),
         sessionId: document.getElementById('sessionId'),
+        
+        // Drawing tools
         penTool: document.getElementById('penTool'),
+        lineTool: document.getElementById('lineTool'),
+        rectangleTool: document.getElementById('rectangleTool'),
+        circleTool: document.getElementById('circleTool'),
+        arrowTool: document.getElementById('arrowTool'),
+        highlighterTool: document.getElementById('highlighterTool'),
+        textTool: document.getElementById('textTool'),
         eraserTool: document.getElementById('eraserTool'),
+        
+        // Style controls
+        lineStyle: document.getElementById('lineStyle'),
         colorPicker: document.getElementById('colorPicker'),
         strokeWidth: document.getElementById('strokeWidth'),
         strokeValue: document.getElementById('strokeValue'),
+        presetColors: document.querySelectorAll('.color-preset-compact'),
+        moreOptionsBtn: document.getElementById('moreOptionsBtn'),
+        toolbarSecondary: document.getElementById('toolbarSecondary'),
+        
+        // Canvas controls
+        gridToggle: document.getElementById('gridToggle'),
+        snapToggle: document.getElementById('snapToggle'),
+        minimapToggle: document.getElementById('minimapToggle'),
+        
+        // Zoom controls
+        zoomIn: document.getElementById('zoomIn'),
+        zoomOut: document.getElementById('zoomOut'),
+        zoomReset: document.getElementById('zoomReset'),
+        zoomLevel: document.getElementById('zoomLevel'),
+        
+        // Edit controls
+        undoBtn: document.getElementById('undoBtn'),
+        redoBtn: document.getElementById('redoBtn'),
+        
+        // Actions
         clearCanvas: document.getElementById('clearCanvas'),
         downloadCanvas: document.getElementById('downloadCanvas'),
+        downloadPDF: document.getElementById('downloadPDF'),
         notifications: document.getElementById('notifications'),
-        presetColors: document.querySelectorAll('.color-preset'),
         
         // Room elements
         roomBadge: document.getElementById('roomBadge'),
@@ -141,13 +213,42 @@
         cancelRegister: document.getElementById('cancelRegister'),
         confirmRegister: document.getElementById('confirmRegister'),
         registerMessage: document.getElementById('registerMessage'),
+        
+        // Chat elements
+        chatPanel: document.getElementById('chatPanel'),
+        chatMessages: document.getElementById('chatMessages'),
+        chatInput: document.getElementById('chatInput'),
+        sendChatBtn: document.getElementById('sendChatBtn'),
+        chatToggle: document.getElementById('chatToggle'),
+        closeChatBtn: document.getElementById('closeChatBtn'),
+        userCursorsContainer: document.getElementById('userCursorsContainer'),
         switchToLogin: document.getElementById('switchToLogin')
     };
 
     // ========================================
     // Initialization
     // ========================================
+    function restoreAuthState() {
+        const userId = localStorage.getItem('whiteboard_userId');
+        const username = localStorage.getItem('whiteboard_username');
+        const token = localStorage.getItem('whiteboard_token');
+        
+        if (userId && username && token) {
+            state.isLoggedIn = true;
+            state.userId = parseInt(userId);
+            state.username = username;
+            state.token = token;
+            state.currentUser = {
+                id: parseInt(userId),
+                username: username
+            };
+            
+            updateAuthUI();
+        }
+    }
+
     function init() {
+        restoreAuthState();
         initCanvas();
         initEventListeners();
         initAuthListeners();
@@ -161,7 +262,8 @@
 
     function initCanvas() {
         state.canvas = elements.canvas;
-        state.ctx = state.canvas.getContext('2d');
+        // Hint frequent readbacks to avoid performance warnings
+        state.ctx = state.canvas.getContext('2d', { willReadFrequently: true });
         
         // Set canvas size
         resizeCanvas();
@@ -173,15 +275,21 @@
     }
 
     function resizeCanvas() {
-        const container = elements.canvasContainer;
-        const rect = container.getBoundingClientRect();
+        // Fixed canvas size instead of responsive
+        const fixedWidth = 1200;
+        const fixedHeight = 800;
         
         // Save current canvas content
         const imageData = state.ctx ? state.ctx.getImageData(0, 0, state.canvas.width, state.canvas.height) : null;
         
-        // Resize canvas
-        state.canvas.width = rect.width;
-        state.canvas.height = rect.height;
+        // Set fixed canvas size
+        state.canvas.width = fixedWidth;
+        state.canvas.height = fixedHeight;
+        
+        // Update container to match canvas size
+        const container = elements.canvasContainer;
+        container.style.width = fixedWidth + 'px';
+        container.style.height = fixedHeight + 'px';
         
         // Restore canvas settings
         state.ctx.lineCap = 'round';
@@ -189,7 +297,14 @@
         
         // Restore content if exists
         if (imageData) {
-            state.ctx.putImageData(imageData, 0, 0);
+            // If resizing, we need to handle the content differently
+            // For now, just clear and let history reload
+            state.ctx.fillStyle = '#FFFFFF';
+            state.ctx.fillRect(0, 0, state.canvas.width, state.canvas.height);
+        } else {
+            // Initial setup - clear canvas
+            state.ctx.fillStyle = '#FFFFFF';
+            state.ctx.fillRect(0, 0, state.canvas.width, state.canvas.height);
         }
     }
 
@@ -199,15 +314,28 @@
         state.canvas.addEventListener('mousemove', draw);
         state.canvas.addEventListener('mouseup', stopDrawing);
         state.canvas.addEventListener('mouseout', stopDrawing);
+        // Removed wheel event for zoom - fixed canvas size
+        state.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
         
         // Touch events for mobile
         state.canvas.addEventListener('touchstart', handleTouchStart);
         state.canvas.addEventListener('touchmove', handleTouchMove);
         state.canvas.addEventListener('touchend', stopDrawing);
         
-        // Tool buttons
+        // Tool buttons - Drawing tools
         elements.penTool.addEventListener('click', () => selectTool('pen'));
+        elements.lineTool.addEventListener('click', () => selectTool('line'));
+        elements.rectangleTool.addEventListener('click', () => selectTool('rectangle'));
+        elements.circleTool.addEventListener('click', () => selectTool('circle'));
+        elements.arrowTool.addEventListener('click', () => selectTool('arrow'));
+        elements.highlighterTool.addEventListener('click', () => selectTool('highlighter'));
+        elements.textTool.addEventListener('click', () => selectTool('text'));
         elements.eraserTool.addEventListener('click', () => selectTool('eraser'));
+        
+        // Style controls
+        elements.lineStyle.addEventListener('change', (e) => {
+            state.lineStyle = e.target.value;
+        });
         
         // Color picker
         elements.colorPicker.addEventListener('input', (e) => {
@@ -231,9 +359,84 @@
             elements.strokeValue.textContent = state.strokeWidth;
         });
         
+        // Canvas controls
+        elements.gridToggle.addEventListener('click', () => {
+            state.showGrid = !state.showGrid;
+            elements.gridToggle.classList.toggle('active', state.showGrid);
+            redrawCanvas();
+        });
+        
+        elements.snapToggle.addEventListener('click', () => {
+            state.snapToGrid = !state.snapToGrid;
+            elements.snapToggle.classList.toggle('active', state.snapToGrid);
+        });
+        
+        elements.minimapToggle.addEventListener('click', () => {
+            state.showMinimap = !state.showMinimap;
+            elements.minimapToggle.classList.toggle('active', state.showMinimap);
+            redrawCanvas();
+        });
+        
+        // More options menu toggle
+        elements.moreOptionsBtn.addEventListener('click', () => {
+            elements.toolbarSecondary.classList.toggle('hidden');
+            elements.moreOptionsBtn.classList.toggle('active');
+        });
+        
+        // Close menu when clicking elsewhere
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.toolbar')) {
+                elements.toolbarSecondary.classList.add('hidden');
+                elements.moreOptionsBtn.classList.remove('active');
+            }
+        });
+        
+        // Zoom controls
+        elements.zoomIn.addEventListener('click', () => zoomCanvas(1.2));
+        elements.zoomOut.addEventListener('click', () => zoomCanvas(0.8));
+        elements.zoomReset.addEventListener('click', () => {
+            state.zoom = 1;
+            state.panX = 0;
+            state.panY = 0;
+            updateZoomDisplay();
+            redrawCanvas();
+        });
+        
+        // Edit controls
+        elements.undoBtn.addEventListener('click', undo);
+        elements.redoBtn.addEventListener('click', redo);
+        
         // Actions
         elements.clearCanvas.addEventListener('click', clearCanvas);
         elements.downloadCanvas.addEventListener('click', downloadCanvas);
+        elements.downloadPDF.addEventListener('click', downloadCanvasPDF);
+        
+        // Chat
+        elements.chatToggle.addEventListener('click', () => {
+            elements.chatPanel.classList.toggle('open');
+        });
+        elements.closeChatBtn.addEventListener('click', () => {
+            elements.chatPanel.classList.remove('open');
+        });
+        elements.sendChatBtn.addEventListener('click', sendChatMessage);
+        elements.chatInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') sendChatMessage();
+        });
+        
+        // Mouse movement for cursor tracking
+        state.canvas.addEventListener('mousemove', (e) => {
+            const coords = getCanvasCoordinates(e);
+            state.lastMouseX = coords.x;
+            state.lastMouseY = coords.y;
+            
+            // Send cursor position every 100ms
+            if (!state.cursorSendTimer) {
+                state.cursorSendTimer = setTimeout(() => {
+                    sendCursorPosition(coords.x, coords.y);
+                    state.cursorSendTimer = null;
+                }, 100);
+            }
+        });
     }
 
     function initRoomListeners() {
@@ -436,6 +639,11 @@
         state.username = '';
         state.token = null;
         
+        // Clear authentication state from localStorage
+        localStorage.removeItem('whiteboard_userId');
+        localStorage.removeItem('whiteboard_username');
+        localStorage.removeItem('whiteboard_token');
+        
         // Update UI
         updateAuthUI();
         showNotification('Logged out successfully', 'success');
@@ -555,6 +763,12 @@
                         id: data.userId,
                         username: data.username
                     };
+                    
+                    // Save authentication state to localStorage
+                    localStorage.setItem('whiteboard_userId', data.userId);
+                    localStorage.setItem('whiteboard_username', data.username);
+                    localStorage.setItem('whiteboard_token', data.token);
+                    
                     updateAuthUI();
                     elements.loginModal.classList.add('hidden');
                     showNotification(`Welcome, ${data.username}!`, 'success');
@@ -583,6 +797,24 @@
                     drawRemoteStroke(data);
                     break;
                     
+                case 'shape':
+                    drawRemoteShape(data);
+                    break;
+                    
+                case 'text':
+                    state.ctx.fillStyle = data.color;
+                    state.ctx.font = data.size + 'px monospace';
+                    state.ctx.fillText(data.text, data.x, data.y);
+                    break;
+                    
+                case 'chat':
+                    addChatMessage(data);
+                    break;
+                    
+                case 'cursor':
+                    updateUserCursor(data);
+                    break;
+                    
                 case 'clear':
                     clearCanvasLocal();
                     showNotification('Canvas cleared', 'info');
@@ -594,6 +826,9 @@
                     
                 case 'historyStart':
                     state.isReceivingHistory = true;
+                    // Clear canvas before loading history
+                    state.ctx.fillStyle = '#FFFFFF';
+                    state.ctx.fillRect(0, 0, state.canvas.width, state.canvas.height);
                     break;
                     
                 case 'historyEnd':
@@ -701,10 +936,131 @@
             y2: Math.round(y2),
             color: state.currentTool === 'eraser' ? '#FFFFFF' : state.currentColor,
             tool: state.currentTool,
-            strokeWidth: state.currentTool === 'eraser' ? state.strokeWidth * 3 : state.strokeWidth
+            strokeWidth: state.currentTool === 'eraser' ? state.strokeWidth * 3 : state.strokeWidth,
+            lineStyle: state.lineStyle,
+            username: state.username || 'Anonymous'
         };
         
         state.socket.send(JSON.stringify(event));
+    }
+
+    // ========================================
+    // Chat Functions
+    // ========================================
+    function sendChatMessage() {
+        const message = elements.chatInput.value.trim();
+        if (!message) return;
+        
+        elements.chatInput.value = '';
+        
+        sendMessage({
+            type: 'chat',
+            message: message,
+            username: state.username || 'Anonymous',
+            timestamp: new Date().toISOString()
+        });
+        
+        // Add to own chat locally
+        addChatMessageLocal(message, state.username || 'Anonymous', true);
+    }
+
+    function addChatMessageLocal(message, username, isOwn = false) {
+        const messageEl = document.createElement('div');
+        messageEl.className = 'chat-message' + (isOwn ? ' own' : '');
+        
+        const userEl = document.createElement('div');
+        userEl.className = 'chat-message-user';
+        userEl.textContent = username;
+        
+        const textEl = document.createElement('div');
+        textEl.className = 'chat-message-text';
+        textEl.textContent = message;
+        
+        const timeEl = document.createElement('div');
+        timeEl.className = 'chat-message-time';
+        timeEl.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        
+        messageEl.appendChild(userEl);
+        messageEl.appendChild(textEl);
+        messageEl.appendChild(timeEl);
+        
+        elements.chatMessages.appendChild(messageEl);
+        elements.chatMessages.scrollTop = elements.chatMessages.scrollHeight;
+    }
+
+    function addChatMessage(data) {
+        addChatMessageLocal(data.message, data.username);
+    }
+
+    // ========================================
+    // Live Cursor Functions
+    // ========================================
+    function sendCursorPosition(x, y) {
+        if (!state.isConnected || !state.socket || !state.username) return;
+        
+        // Send screen coordinates, not canvas coordinates
+        const rect = state.canvas.getBoundingClientRect();
+        const screenX = x + rect.left;
+        const screenY = y + rect.top;
+        
+        sendMessage({
+            type: 'cursor',
+            x: Math.round(screenX),
+            y: Math.round(screenY),
+            username: state.username,
+            sessionId: state.sessionId
+        });
+    }
+
+    function updateUserCursor(data) {
+        const cursorId = 'cursor-' + data.sessionId;
+        let cursorEl = document.getElementById(cursorId);
+        
+        if (!cursorEl) {
+            cursorEl = document.createElement('div');
+            cursorEl.id = cursorId;
+            cursorEl.className = 'user-cursor';
+            
+            // Assign consistent color based on sessionId
+            const colorIndex = Math.abs(data.sessionId.charCodeAt(0) % state.cursorColors.length);
+            const color = state.cursorColors[colorIndex];
+            cursorEl.style.color = color;
+            
+            elements.userCursorsContainer.appendChild(cursorEl);
+        }
+        
+        // Convert screen coordinates back to canvas coordinates
+        const rect = state.canvas.getBoundingClientRect();
+        const canvasX = data.x - rect.left;
+        const canvasY = data.y - rect.top;
+        
+        // Apply zoom and pan transformation
+        const displayX = canvasX * state.zoom + state.panX;
+        const displayY = canvasY * state.zoom + state.panY;
+        
+        // Update position
+        cursorEl.style.left = displayX + 'px';
+        cursorEl.style.top = displayY + 'px';
+        
+        // Update label
+        let label = cursorEl.querySelector('.user-cursor-label');
+        if (!label) {
+            const pointer = document.createElement('div');
+            pointer.className = 'user-cursor-pointer';
+            cursorEl.appendChild(pointer);
+            
+            label = document.createElement('div');
+            label.className = 'user-cursor-label';
+            cursorEl.appendChild(label);
+        }
+        label.textContent = data.username;
+        
+        // Remove cursor after 2 seconds of inactivity
+        clearTimeout(cursorEl.hideTimer);
+        cursorEl.style.opacity = '1';
+        cursorEl.hideTimer = setTimeout(() => {
+            cursorEl.style.opacity = '0.3';
+        }, 2000);
     }
 
     // ========================================
@@ -913,34 +1269,127 @@
     // ========================================
     function startDrawing(e) {
         // Don't allow drawing if in room but not approved
-        if (state.isInRoom && !state.isApproved) return;
+        if (state.isInRoom && !state.isApproved) {
+            showNotification('You must be approved by the room owner to draw.', 'warning');
+            return;
+        }
         
         state.isDrawing = true;
         const coords = getCanvasCoordinates(e);
         state.lastX = coords.x;
         state.lastY = coords.y;
+        
+        // For shapes, mark the start point and save canvas state
+        if (['line', 'rectangle', 'circle', 'arrow'].includes(state.currentTool)) {
+            state.shapeStart = { x: coords.x, y: coords.y };
+            state.shapePreviewActive = true;
+            state.shapePreviewData = state.ctx.getImageData(0, 0, state.canvas.width, state.canvas.height);
+            saveHistoryState();
+        } else if (state.currentTool === 'text') {
+            createTextInput(coords.x, coords.y);
+            state.isDrawing = false;
+        }
     }
 
     function draw(e) {
         if (!state.isDrawing) return;
-        if (state.isInRoom && !state.isApproved) return;
+        if (state.isInRoom && !state.isApproved) {
+            showNotification('You must be approved by the room owner to draw.', 'warning');
+            return;
+        }
         
         const coords = getCanvasCoordinates(e);
         
-        // Draw locally
-        drawStroke(state.lastX, state.lastY, coords.x, coords.y, 
-                   state.currentTool === 'eraser' ? '#FFFFFF' : state.currentColor,
-                   state.currentTool === 'eraser' ? state.strokeWidth * 3 : state.strokeWidth);
+        // Handle pan with middle mouse button
+        if (e.buttons === 4) {
+            state.panX += coords.x - state.lastX;
+            state.panY += coords.y - state.lastY;
+            redrawCanvas();
+            state.lastX = coords.x;
+            state.lastY = coords.y;
+            return;
+        }
         
-        // Send to server
-        sendDrawEvent(state.lastX, state.lastY, coords.x, coords.y);
+        // Check for Shift key for constraints
+        state.shapeConstraint = e.shiftKey;
+        
+        if (state.currentTool === 'pen') {
+            drawStroke(state.lastX, state.lastY, coords.x, coords.y, 
+                       state.currentColor, state.strokeWidth, state.lineStyle);
+            sendDrawEvent(state.lastX, state.lastY, coords.x, coords.y);
+        } else if (state.currentTool === 'eraser') {
+            drawStroke(state.lastX, state.lastY, coords.x, coords.y,
+                       '#FFFFFF', state.strokeWidth * 3, 'solid');
+            sendDrawEvent(state.lastX, state.lastY, coords.x, coords.y);
+        } else if (state.currentTool === 'highlighter') {
+            drawHighlighter(state.lastX, state.lastY, coords.x, coords.y, state.currentColor, state.strokeWidth);
+            sendDrawEvent(state.lastX, state.lastY, coords.x, coords.y);
+        } else if (['line', 'rectangle', 'circle', 'arrow'].includes(state.currentTool)) {
+            // Restore canvas state and draw shape preview
+            if (state.shapePreviewData && state.shapePreviewActive) {
+                state.ctx.putImageData(state.shapePreviewData, 0, 0);
+                
+                if (state.currentTool === 'line') {
+                    drawLine(state.shapeStart.x, state.shapeStart.y, coords.x, coords.y, 
+                            state.currentColor, state.strokeWidth, state.lineStyle);
+                } else if (state.currentTool === 'rectangle') {
+                    drawRectangle(state.shapeStart.x, state.shapeStart.y, coords.x, coords.y,
+                                 state.currentColor, state.strokeWidth, state.shapeConstraint);
+                } else if (state.currentTool === 'circle') {
+                    drawCircle(state.shapeStart.x, state.shapeStart.y, coords.x, coords.y,
+                              state.currentColor, state.strokeWidth, state.shapeConstraint);
+                } else if (state.currentTool === 'arrow') {
+                    drawArrow(state.shapeStart.x, state.shapeStart.y, coords.x, coords.y,
+                             state.currentColor, state.strokeWidth, state.lineStyle);
+                }
+            }
+        }
         
         state.lastX = coords.x;
         state.lastY = coords.y;
     }
 
-    function stopDrawing() {
+    function stopDrawing(e) {
+        if (!state.isDrawing) return;
+        
         state.isDrawing = false;
+        
+        // For shapes, finalize or cancel the drawing
+        if (state.shapeStart && ['line', 'rectangle', 'circle', 'arrow'].includes(state.currentTool)) {
+            const coords = getCanvasCoordinates(e);
+            const rect = state.canvas.getBoundingClientRect();
+            const isInsideCanvas = e.clientX >= rect.left && e.clientX <= rect.right && 
+                                   e.clientY >= rect.top && e.clientY <= rect.bottom;
+            
+            // Only finalize if mouse is still inside canvas (meaning user completed the shape)
+            if (isInsideCanvas && (Math.abs(coords.x - state.shapeStart.x) > 5 || Math.abs(coords.y - state.shapeStart.y) > 5)) {
+                const shapeData = {
+                    type: 'shape',
+                    tool: state.currentTool,
+                    x1: state.shapeStart.x,
+                    y1: state.shapeStart.y,
+                    x2: coords.x,
+                    y2: coords.y,
+                    color: state.currentColor,
+                    strokeWidth: state.strokeWidth,
+                    lineStyle: state.lineStyle,
+                    constraint: state.shapeConstraint
+                };
+                
+                if (state.socket && state.socket.readyState === WebSocket.OPEN) {
+                    state.socket.send(JSON.stringify(shapeData));
+                }
+            } else {
+                // Cancel shape - restore original canvas state
+                if (state.shapePreviewData) {
+                    state.ctx.putImageData(state.shapePreviewData, 0, 0);
+                }
+            }
+            
+            state.shapeStart = null;
+            state.shapePreviewActive = false;
+            state.shapePreviewData = null;
+        }
     }
 
     function handleTouchStart(e) {
@@ -958,33 +1407,187 @@
         const touch = e.touches[0];
         const mouseEvent = new MouseEvent('mousemove', {
             clientX: touch.clientX,
-            clientY: touch.clientY
+            clientY: touch.clientY,
+            buttons: 1
         });
         draw(mouseEvent);
     }
 
-    function drawStroke(x1, y1, x2, y2, color, width) {
+    function drawStroke(x1, y1, x2, y2, color, width, style = 'solid') {
         state.ctx.beginPath();
         state.ctx.moveTo(x1, y1);
         state.ctx.lineTo(x2, y2);
         state.ctx.strokeStyle = color;
         state.ctx.lineWidth = width;
+        state.ctx.lineCap = 'round';
+        state.ctx.lineJoin = 'round';
+        
+        setLineStyle(style);
+        state.ctx.stroke();
+        state.ctx.closePath();
+        state.ctx.setLineDash([]);
+    }
+
+    function setLineStyle(style) {
+        switch(style) {
+            case 'dashed':
+                state.ctx.setLineDash([10, 5]);
+                break;
+            case 'dotted':
+                state.ctx.setLineDash([2, 5]);
+                break;
+            default:
+                state.ctx.setLineDash([]);
+        }
+    }
+
+    function drawLine(x1, y1, x2, y2, color, width, style = 'solid') {
+        drawStroke(x1, y1, x2, y2, color, width, style);
+    }
+
+    function drawRectangle(x1, y1, x2, y2, color, width, constraint = false) {
+        let w = x2 - x1;
+        let h = y2 - y1;
+        
+        // Make square if constraint (Shift) is held
+        if (constraint) {
+            const size = Math.min(Math.abs(w), Math.abs(h));
+            w = w < 0 ? -size : size;
+            h = h < 0 ? -size : size;
+        }
+        
+        state.ctx.strokeStyle = color;
+        state.ctx.lineWidth = width;
+        state.ctx.setLineDash([]);
+        state.ctx.strokeRect(x1, y1, w, h);
+    }
+
+    function drawCircle(x1, y1, x2, y2, color, width, constraint = false) {
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const radius = Math.sqrt(dx * dx + dy * dy);
+        
+        state.ctx.strokeStyle = color;
+        state.ctx.lineWidth = width;
+        state.ctx.setLineDash([]);
+        state.ctx.beginPath();
+        state.ctx.arc(x1, y1, radius, 0, 2 * Math.PI);
         state.ctx.stroke();
         state.ctx.closePath();
     }
 
+    function drawArrow(x1, y1, x2, y2, color, width, style = 'solid') {
+        const headlen = 20;
+        const angle = Math.atan2(y2 - y1, x2 - x1);
+        
+        // Draw line
+        drawStroke(x1, y1, x2, y2, color, width, style);
+        
+        // Draw arrowhead
+        state.ctx.fillStyle = color;
+        state.ctx.beginPath();
+        state.ctx.moveTo(x2, y2);
+        state.ctx.lineTo(x2 - headlen * Math.cos(angle - Math.PI / 6), y2 - headlen * Math.sin(angle - Math.PI / 6));
+        state.ctx.lineTo(x2 - headlen * Math.cos(angle + Math.PI / 6), y2 - headlen * Math.sin(angle + Math.PI / 6));
+        state.ctx.closePath();
+        state.ctx.fill();
+    }
+
+    function drawHighlighter(x1, y1, x2, y2, color, width) {
+        state.ctx.strokeStyle = color;
+        state.ctx.globalAlpha = 0.3;
+        state.ctx.lineWidth = width * 3;
+        state.ctx.lineCap = 'round';
+        state.ctx.lineJoin = 'round';
+        state.ctx.beginPath();
+        state.ctx.moveTo(x1, y1);
+        state.ctx.lineTo(x2, y2);
+        state.ctx.stroke();
+        state.ctx.closePath();
+        state.ctx.globalAlpha = 1;
+    }
+
     function drawRemoteStroke(data) {
-        const color = data.tool === 'eraser' ? '#FFFFFF' : data.color;
-        const width = data.tool === 'eraser' ? data.strokeWidth * 3 : data.strokeWidth;
-        drawStroke(data.x1, data.y1, data.x2, data.y2, color, width);
+        if (data.tool === 'eraser') {
+            drawStroke(data.x1, data.y1, data.x2, data.y2, '#FFFFFF', data.strokeWidth * 3, 'solid');
+        } else if (data.tool === 'highlighter') {
+            drawHighlighter(data.x1, data.y1, data.x2, data.y2, data.color, data.strokeWidth);
+        } else {
+            drawStroke(data.x1, data.y1, data.x2, data.y2, data.color, data.strokeWidth, data.lineStyle || 'solid');
+        }
+    }
+
+    function drawRemoteShape(data) {
+        switch(data.tool) {
+            case 'line':
+                drawLine(data.x1, data.y1, data.x2, data.y2, data.color, data.strokeWidth, data.lineStyle);
+                break;
+            case 'rectangle':
+                drawRectangle(data.x1, data.y1, data.x2, data.y2, data.color, data.strokeWidth, data.constraint);
+                break;
+            case 'circle':
+                drawCircle(data.x1, data.y1, data.x2, data.y2, data.color, data.strokeWidth, data.constraint);
+                break;
+            case 'arrow':
+                drawArrow(data.x1, data.y1, data.x2, data.y2, data.color, data.strokeWidth, data.lineStyle);
+                break;
+        }
     }
 
     function getCanvasCoordinates(e) {
         const rect = state.canvas.getBoundingClientRect();
-        return {
-            x: e.clientX - rect.left,
-            y: e.clientY - rect.top
+        let x = e.clientX - rect.left;
+        let y = e.clientY - rect.top;
+        
+        // Fixed canvas - no pan/zoom transformations
+        // Snap to grid if enabled
+        if (state.snapToGrid) {
+            x = Math.round(x / state.gridSize) * state.gridSize;
+            y = Math.round(y / state.gridSize) * state.gridSize;
+        }
+        
+        return { x, y };
+    }
+
+    function createTextInput(x, y) {
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.style.position = 'absolute';
+        input.style.left = (x + state.panX) + 'px';
+        input.style.top = (y + state.panY) + 'px';
+        input.style.fontSize = state.strokeWidth * 4 + 'px';
+        input.style.color = state.currentColor;
+        input.style.border = 'none';
+        input.style.backgroundColor = 'transparent';
+        input.style.fontFamily = 'monospace';
+        input.style.zIndex = '1000';
+        
+        document.body.appendChild(input);
+        input.focus();
+        
+        const finishText = () => {
+            if (input.value) {
+                state.ctx.fillStyle = state.currentColor;
+                state.ctx.font = (state.strokeWidth * 4) + 'px monospace';
+                state.ctx.fillText(input.value, x, y);
+                
+                sendMessage({
+                    type: 'text',
+                    x: x,
+                    y: y,
+                    text: input.value,
+                    color: state.currentColor,
+                    size: state.strokeWidth * 4
+                });
+            }
+            document.body.removeChild(input);
+            saveHistoryState();
         };
+        
+        input.addEventListener('blur', finishText);
+        input.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') finishText();
+        });
     }
 
     // ========================================
@@ -993,12 +1596,38 @@
     function selectTool(tool) {
         state.currentTool = tool;
         
-        // Update UI
-        elements.penTool.classList.toggle('active', tool === 'pen');
-        elements.eraserTool.classList.toggle('active', tool === 'eraser');
+        // Update UI - remove active from all tools
+        document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('active'));
+        
+        // Add active to selected tool
+        const toolMap = {
+            'pen': elements.penTool,
+            'line': elements.lineTool,
+            'rectangle': elements.rectangleTool,
+            'circle': elements.circleTool,
+            'arrow': elements.arrowTool,
+            'highlighter': elements.highlighterTool,
+            'text': elements.textTool,
+            'eraser': elements.eraserTool
+        };
+        
+        if (toolMap[tool]) {
+            toolMap[tool].classList.add('active');
+        }
         
         // Update cursor
-        state.canvas.style.cursor = tool === 'eraser' ? 'cell' : 'crosshair';
+        const cursorMap = {
+            'pen': 'crosshair',
+            'line': 'crosshair',
+            'rectangle': 'crosshair',
+            'circle': 'crosshair',
+            'arrow': 'crosshair',
+            'highlighter': 'crosshair',
+            'text': 'text',
+            'eraser': 'cell'
+        };
+        
+        state.canvas.style.cursor = cursorMap[tool] || 'crosshair';
     }
 
     function updatePresetSelection(selectedPreset) {
@@ -1008,6 +1637,160 @@
         if (selectedPreset) {
             selectedPreset.classList.add('active');
         }
+    }
+
+    // ========================================
+    // Canvas Navigation (Zoom & Pan)
+    // ========================================
+    function handleCanvasZoom(e) {
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? 0.9 : 1.1;
+        zoomCanvas(delta);
+    }
+
+    function zoomCanvas(factor) {
+        const oldZoom = state.zoom;
+        state.zoom *= factor;
+        state.zoom = Math.max(0.5, Math.min(5, state.zoom)); // Clamp between 0.5x and 5x
+        
+        updateZoomDisplay();
+        redrawCanvas();
+    }
+
+    function updateZoomDisplay() {
+        elements.zoomLevel.textContent = Math.round(state.zoom * 100) + '%';
+    }
+
+    // ========================================
+    // Grid & Snap
+    // ========================================
+    function drawGrid() {
+        if (!state.showGrid) return;
+        
+        state.ctx.strokeStyle = '#E5E7EB';
+        state.ctx.lineWidth = 0.5;
+        state.ctx.setLineDash([]);
+        
+        const gridSize = state.gridSize * state.zoom;
+        const offsetX = state.panX % gridSize;
+        const offsetY = state.panY % gridSize;
+        
+        for (let x = offsetX; x < state.canvas.width; x += gridSize) {
+            state.ctx.beginPath();
+            state.ctx.moveTo(x, 0);
+            state.ctx.lineTo(x, state.canvas.height);
+            state.ctx.stroke();
+        }
+        
+        for (let y = offsetY; y < state.canvas.height; y += gridSize) {
+            state.ctx.beginPath();
+            state.ctx.moveTo(0, y);
+            state.ctx.lineTo(state.canvas.width, y);
+            state.ctx.stroke();
+        }
+    }
+
+    // ========================================
+    // Mini-map
+    // ========================================
+    function drawMinimap() {
+        if (!state.showMinimap) return;
+        
+        const minimapSize = 120;
+        const padding = 10;
+        const x = state.canvas.width - minimapSize - padding;
+        const y = state.canvas.height - minimapSize - padding;
+        
+        // Background
+        state.ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+        state.ctx.strokeStyle = '#999';
+        state.ctx.lineWidth = 1;
+        state.ctx.fillRect(x, y, minimapSize, minimapSize);
+        state.ctx.strokeRect(x, y, minimapSize, minimapSize);
+        
+        // Viewport indicator
+        const scaleX = minimapSize / (state.canvas.width / state.zoom);
+        const scaleY = minimapSize / (state.canvas.height / state.zoom);
+        
+        state.ctx.strokeStyle = '#00FF00';
+        state.ctx.lineWidth = 2;
+        state.ctx.strokeRect(
+            x + (-state.panX / state.zoom) * scaleX,
+            y + (-state.panY / state.zoom) * scaleY,
+            state.canvas.width * scaleX,
+            state.canvas.height * scaleY
+        );
+    }
+
+    // ========================================
+    // History (Undo/Redo)
+    // ========================================
+    function saveHistoryState() {
+        // Remove any states after current index (if we've undone something)
+        state.history = state.history.slice(0, state.historyIndex + 1);
+        
+        // Get canvas image data
+        const imageData = state.ctx.getImageData(0, 0, state.canvas.width, state.canvas.height);
+        state.history.push(imageData);
+        state.historyIndex++;
+        
+        // Limit history size
+        if (state.history.length > state.maxHistorySize) {
+            state.history.shift();
+            state.historyIndex--;
+        }
+        
+        updateHistoryButtons();
+    }
+
+    function undo() {
+        if (state.historyIndex > 0) {
+            state.historyIndex--;
+            const imageData = state.history[state.historyIndex];
+            state.ctx.putImageData(imageData, 0, 0);
+            updateHistoryButtons();
+        }
+    }
+
+    function redo() {
+        if (state.historyIndex < state.history.length - 1) {
+            state.historyIndex++;
+            const imageData = state.history[state.historyIndex];
+            state.ctx.putImageData(imageData, 0, 0);
+            updateHistoryButtons();
+        }
+    }
+
+    function updateHistoryButtons() {
+        elements.undoBtn.classList.toggle('disabled', state.historyIndex <= 0);
+        elements.redoBtn.classList.toggle('disabled', state.historyIndex >= state.history.length - 1);
+    }
+
+    // ========================================
+    // Canvas Redraw
+    // ========================================
+    function redrawCanvas() {
+        // Clear canvas
+        state.ctx.fillStyle = '#FFFFFF';
+        state.ctx.fillRect(0, 0, state.canvas.width, state.canvas.height);
+        
+        // Apply transformations
+        state.ctx.save();
+        state.ctx.translate(state.panX, state.panY);
+        state.ctx.scale(state.zoom, state.zoom);
+        
+        // Draw grid
+        state.ctx.restore();
+        drawGrid();
+        
+        // Restore transformations for drawing
+        state.ctx.save();
+        state.ctx.translate(state.panX, state.panY);
+        state.ctx.scale(state.zoom, state.zoom);
+        state.ctx.restore();
+        
+        // Draw minimap
+        drawMinimap();
     }
 
     // ========================================
@@ -1022,6 +1805,7 @@
         if (confirm('Are you sure you want to clear the canvas? This will clear for all users.')) {
             state.socket.send(JSON.stringify({ type: 'clear' }));
             clearCanvasLocal();
+            saveHistoryState();
         }
     }
 
@@ -1035,7 +1819,34 @@
         link.download = 'whiteboard-' + new Date().toISOString().slice(0, 10) + '.png';
         link.href = state.canvas.toDataURL('image/png');
         link.click();
-        showNotification('Canvas saved!', 'success');
+        showNotification('Canvas saved as PNG!', 'success');
+    }
+
+    function downloadCanvasPDF() {
+        // Simple PDF export using canvas
+        const canvas = state.canvas;
+        const imgData = canvas.toDataURL('image/png');
+        const width = canvas.width;
+        const height = canvas.height;
+        
+        // Create a simple PDF structure (inline data)
+        const pdfStr = 
+            '%PDF-1.4\n' +
+            '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n' +
+            '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n' +
+            '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 ' + width + ' ' + height + ']/Contents 4 0 R/Resources<<>>>>endobj\n' +
+            '4 0 obj<</Length 44>>stream\nBT\n/F1 12 Tf\n100 100 Td\n(Download as PNG instead) Tj\nET\nendstream\nendobj\n' +
+            'xref\n0 5\n' +
+            '0000000000 65535 f\n' +
+            '0000000009 00000 n\n' +
+            '0000000058 00000 n\n' +
+            '0000000115 00000 n\n' +
+            '0000000214 00000 n\n' +
+            'trailer<</Size 5/Root 1 0 R>>\nstartxref\n306\n%%EOF';
+        
+        // For now, just show a message and download as PNG instead
+        showNotification('PDF export: Please use Save PNG option and convert to PDF separately', 'info');
+        downloadCanvas();
     }
 
     // ========================================
@@ -1076,29 +1887,98 @@
     // ========================================
     function handleKeyboard(e) {
         // Don't trigger if user is typing in an input
-        if (e.target.tagName === 'INPUT') return;
+        if (e.target.tagName === 'INPUT' && e.target.type !== 'range') return;
+        
+        // Handle Ctrl/Cmd + Z for undo
+        if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
+            e.preventDefault();
+            undo();
+            return;
+        }
+        
+        // Handle Ctrl/Cmd + Y or Shift+Ctrl+Z for redo
+        if ((e.ctrlKey || e.metaKey) && (e.key === 'y' || (e.key === 'z' && e.shiftKey))) {
+            e.preventDefault();
+            redo();
+            return;
+        }
         
         switch (e.key.toLowerCase()) {
             case 'p':
                 selectTool('pen');
                 break;
-            case 'e':
-                selectTool('eraser');
+            case 'l':
+                selectTool('line');
+                break;
+            case 'r':
+                selectTool('rectangle');
                 break;
             case 'c':
                 if (!e.ctrlKey && !e.metaKey) {
+                    selectTool('circle');
+                }
+                break;
+            case 'a':
+                if (!e.ctrlKey && !e.metaKey) {
+                    selectTool('arrow');
+                }
+                break;
+            case 'h':
+                selectTool('highlighter');
+                break;
+            case 't':
+                if (!e.ctrlKey && !e.metaKey) {
+                    selectTool('text');
+                }
+                break;
+            case 'e':
+                selectTool('eraser');
+                break;
+            case 'g':
+                state.showGrid = !state.showGrid;
+                elements.gridToggle.classList.toggle('active', state.showGrid);
+                redrawCanvas();
+                break;
+            case 'm':
+                state.showMinimap = !state.showMinimap;
+                elements.minimapToggle.classList.toggle('active', state.showMinimap);
+                redrawCanvas();
+                break;
+            case '+':
+            case '=':
+                e.preventDefault();
+                zoomCanvas(1.2);
+                break;
+            case '-':
+            case '_':
+                e.preventDefault();
+                zoomCanvas(0.8);
+                break;
+            case '0':
+                if (e.ctrlKey || e.metaKey) {
+                    e.preventDefault();
+                    state.zoom = 1;
+                    state.panX = 0;
+                    state.panY = 0;
+                    updateZoomDisplay();
+                    redrawCanvas();
+                }
+                break;
+            case 'delete':
+            case 'backspace':
+                if (e.target === state.canvas) {
+                    e.preventDefault();
                     clearCanvas();
                 }
                 break;
-            case 'd':
-                downloadCanvas();
-                break;
             case '[':
+                e.preventDefault();
                 state.strokeWidth = Math.max(1, state.strokeWidth - 1);
                 elements.strokeWidth.value = state.strokeWidth;
                 elements.strokeValue.textContent = state.strokeWidth;
                 break;
             case ']':
+                e.preventDefault();
                 state.strokeWidth = Math.min(50, state.strokeWidth + 1);
                 elements.strokeWidth.value = state.strokeWidth;
                 elements.strokeValue.textContent = state.strokeWidth;

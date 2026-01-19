@@ -9,6 +9,8 @@ USE whiteboard_db;
 CREATE TABLE IF NOT EXISTS drawing_events (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     session_id VARCHAR(100) NOT NULL,
+    room_code VARCHAR(10),
+    username VARCHAR(100),
     x1 INT NOT NULL,
     y1 INT NOT NULL,
     x2 INT NOT NULL,
@@ -18,6 +20,7 @@ CREATE TABLE IF NOT EXISTS drawing_events (
     stroke_width INT DEFAULT 3,
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_session (session_id),
+    INDEX idx_room (room_code),
     INDEX idx_timestamp (timestamp)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

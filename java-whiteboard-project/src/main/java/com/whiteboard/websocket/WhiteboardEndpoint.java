@@ -147,6 +147,12 @@ public class WhiteboardEndpoint {
                 case "draw":
                     handleDrawEvent(message, senderSession);
                     break;
+                case "shape":
+                    handleShapeEvent(message, senderSession);
+                    break;
+                case "chat":
+                    handleChatMessage(message, senderSession);
+                    break;
                 case "clear":
                     handleClearCanvas(senderSession);
                     break;
@@ -539,6 +545,7 @@ public class WhiteboardEndpoint {
         // Parse the drawing event
         DrawingEvent event = DrawingEvent.fromJson(message);
         event.setSessionId(senderSession.getId());
+        event.setRoomCode(roomCode); // Set room code for database filtering
         
         // Save to database if enabled
         if (PERSIST_TO_DATABASE) {
@@ -556,6 +563,72 @@ public class WhiteboardEndpoint {
             broadcastToRoom(room, broadcastMessage, null);
         } else {
             broadcast(broadcastMessage);
+        }
+    }
+    
+    /**
+     * Handle shape drawing event
+     */
+    private void handleShapeEvent(String message, Session senderSession) {
+        String roomCode = sessionToRoom.get(senderSession.getId());
+        
+        // Check if user is in a room and approved
+        Room room = roomCode != null ? rooms.get(roomCode) : null;
+        if (room != null && !room.isApproved(senderSession)) {
+            return; // Not approved, ignore drawing
+        }
+        
+        // Save shape event to database if enabled
+        if (PERSIST_TO_DATABASE) {
+            try {
+                // Create a drawing event from the shape message
+                // Parse the JSON to extract shape data
+                String tool = extractField(message, "tool");
+                if (tool != null && (tool.equals("line") || tool.equals("rectangle") || tool.equals("circle") || tool.equals("arrow"))) {
+                    DrawingEvent event = new DrawingEvent();
+                    event.setSessionId(senderSession.getId());
+                    event.setRoomCode(roomCode);
+                    event.setUsername(extractField(message, "username"));
+                    event.setTool(tool);
+                    event.setX1(extractInt(message, "x1"));
+                    event.setY1(extractInt(message, "y1"));
+                    event.setX2(extractInt(message, "x2"));
+                    event.setY2(extractInt(message, "y2"));
+                    event.setColor(extractField(message, "color"));
+                    event.setStrokeWidth(extractInt(message, "strokeWidth"));
+                    
+                    drawingEventDAO.saveEvent(event);
+                }
+            } catch (Exception e) {
+                System.err.println("Failed to save shape event to database: " + e.getMessage());
+            }
+        }
+        
+        // Broadcast to room members or all connected clients
+        if (room != null) {
+            broadcastToRoom(room, message, null);
+        } else {
+            broadcast(message);
+        }
+    }
+    
+    /**
+     * Handle chat message
+     */
+    private void handleChatMessage(String message, Session senderSession) {
+        String roomCode = sessionToRoom.get(senderSession.getId());
+        
+        // Check if user is in a room and approved
+        Room room = roomCode != null ? rooms.get(roomCode) : null;
+        if (room != null && !room.isApproved(senderSession)) {
+            return; // Not approved, ignore chat
+        }
+        
+        // Broadcast chat message to all users in the room or globally
+        if (room != null) {
+            broadcastToRoom(room, message, null);
+        } else {
+            broadcast(message);
         }
     }
     
@@ -603,7 +676,14 @@ public class WhiteboardEndpoint {
      */
     private void sendCanvasHistory(Session session, String roomCode) {
         try {
-            List<DrawingEvent> events = drawingEventDAO.getAllEvents();
+            List<DrawingEvent> events;
+            if (roomCode != null) {
+                // Send only events for this room
+                events = drawingEventDAO.getEventsByRoom(roomCode);
+            } else {
+                // Fallback to all events if no room code (shouldn't happen in normal operation)
+                events = drawingEventDAO.getAllEvents();
+            }
             
             if (!events.isEmpty()) {
                 // Send history start marker
@@ -617,7 +697,12 @@ public class WhiteboardEndpoint {
                 // Send history end marker
                 session.getBasicRemote().sendText("{\"type\":\"historyEnd\"}");
                 
-                System.out.println("Sent " + events.size() + " historical events to " + session.getId());
+                System.out.println("Sent " + events.size() + " historical events for room " + roomCode + " to " + session.getId());
+            } else {
+                // Send empty history markers
+                session.getBasicRemote().sendText("{\"type\":\"historyStart\"}");
+                session.getBasicRemote().sendText("{\"type\":\"historyEnd\"}");
+                System.out.println("Sent empty history for room " + roomCode + " to " + session.getId());
             }
         } catch (IOException e) {
             System.err.println("Error sending canvas history: " + e.getMessage());
@@ -727,15 +812,50 @@ public class WhiteboardEndpoint {
      * Extract a field value from JSON string
      */
     private String extractField(String json, String fieldName) {
-        String pattern = "\"" + fieldName + "\":\"";
-        int start = json.indexOf(pattern);
-        if (start == -1) return null;
-        
-        start += pattern.length();
-        int end = json.indexOf("\"", start);
-        if (end == -1) return null;
-        
-        return json.substring(start, end);
+        try {
+            // Simple JSON parsing - look for "fieldName":"value"
+            String pattern = "\"" + fieldName + "\":";
+            int start = json.indexOf(pattern);
+            if (start == -1) return null;
+
+            start += pattern.length();
+
+            // Skip whitespace
+            while (start < json.length() && Character.isWhitespace(json.charAt(start))) {
+                start++;
+            }
+
+            // Check if value is quoted
+            if (start < json.length() && json.charAt(start) == '"') {
+                start++; // Skip opening quote
+                int end = json.indexOf("\"", start);
+                if (end == -1) return null;
+                return json.substring(start, end);
+            } else {
+                // Unquoted value (shouldn't happen in our case, but handle it)
+                int end = start;
+                while (end < json.length() && json.charAt(end) != ',' && json.charAt(end) != '}' && !Character.isWhitespace(json.charAt(end))) {
+                    end++;
+                }
+                return json.substring(start, end);
+            }
+        } catch (Exception e) {
+            System.err.println("Error extracting field '" + fieldName + "' from JSON: " + e.getMessage());
+            return null;
+        }
+    }
+    
+    /**
+     * Extract an integer field value from JSON string
+     */
+    private int extractInt(String json, String fieldName) {
+        try {
+            String value = extractField(json, fieldName);
+            return value != null ? Integer.parseInt(value) : 0;
+        } catch (NumberFormatException e) {
+            System.err.println("Error parsing integer field '" + fieldName + "' from JSON: " + e.getMessage());
+            return 0;
+        }
     }
     
     /**

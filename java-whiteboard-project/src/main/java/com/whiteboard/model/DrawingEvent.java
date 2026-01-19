@@ -10,6 +10,8 @@ public class DrawingEvent {
     
     private Long id;
     private String sessionId;
+    private String roomCode;
+    private String username;
     private int x1;
     private int y1;
     private int x2;
@@ -63,6 +65,22 @@ public class DrawingEvent {
     
     public void setSessionId(String sessionId) {
         this.sessionId = sessionId;
+    }
+    
+    public String getUsername() {
+        return username;
+    }
+    
+    public void setUsername(String username) {
+        this.username = username;
+    }
+    
+    public String getRoomCode() {
+        return roomCode;
+    }
+    
+    public void setRoomCode(String roomCode) {
+        this.roomCode = roomCode;
     }
     
     public int getX1() {
@@ -135,8 +153,8 @@ public class DrawingEvent {
     public String toJson() {
         return String.format(
             "{\"type\":\"draw\",\"x1\":%d,\"y1\":%d,\"x2\":%d,\"y2\":%d," +
-            "\"color\":\"%s\",\"tool\":\"%s\",\"strokeWidth\":%d,\"sessionId\":\"%s\"}",
-            x1, y1, x2, y2, color, tool, strokeWidth, sessionId != null ? sessionId : ""
+            "\"color\":\"%s\",\"tool\":\"%s\",\"strokeWidth\":%d,\"sessionId\":\"%s\",\"username\":\"%s\"}",
+            x1, y1, x2, y2, color, tool, strokeWidth, sessionId != null ? sessionId : "", username != null ? username : ""
         );
     }
     
@@ -156,6 +174,7 @@ public class DrawingEvent {
             event.setTool(extractString(json, "tool"));
             event.setStrokeWidth(extractInt(json, "strokeWidth"));
             event.setSessionId(extractString(json, "sessionId"));
+            event.setUsername(extractString(json, "username"));
         } catch (Exception e) {
             System.err.println("Error parsing JSON: " + e.getMessage());
         }
@@ -198,6 +217,7 @@ public class DrawingEvent {
         return "DrawingEvent{" +
                 "id=" + id +
                 ", sessionId='" + sessionId + '\'' +
+                ", username='" + username + '\'' +
                 ", x1=" + x1 +
                 ", y1=" + y1 +
                 ", x2=" + x2 +

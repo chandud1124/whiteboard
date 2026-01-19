@@ -63,53 +63,84 @@
             </div>
         </div>
         
-        <!-- Toolbar -->
+        <!-- Toolbar - Compact Layout -->
         <div class="toolbar">
-            <div class="tool-group">
-                <label class="tool-label">Tool</label>
-                <div class="tool-buttons">
-                    <button class="tool-btn active" id="penTool" title="Pen Tool (P)">
-                        <span class="tool-icon">✏️</span>
-                        Pen
-                    </button>
-                    <button class="tool-btn" id="eraserTool" title="Eraser Tool (E)">
-                        <span class="tool-icon">🧹</span>
-                        Eraser
-                    </button>
+            <!-- Row 1: Drawing Tools + Quick Controls -->
+            <div class="toolbar-row primary">
+                <!-- Drawing Tools -->
+                <div class="tool-group compact">
+                    <button class="tool-btn active icon-only" id="penTool" title="Pen (P)">✏️</button>
+                    <button class="tool-btn icon-only" id="lineTool" title="Line (L)">📏</button>
+                    <button class="tool-btn icon-only" id="rectangleTool" title="Rectangle (R)">▭</button>
+                    <button class="tool-btn icon-only" id="circleTool" title="Circle (C)">●</button>
+                    <button class="tool-btn icon-only" id="arrowTool" title="Arrow (A)">→</button>
+                    <button class="tool-btn icon-only" id="highlighterTool" title="Highlighter (H)">🖍️</button>
+                    <button class="tool-btn icon-only" id="textTool" title="Text (T)">T</button>
+                    <button class="tool-btn icon-only" id="eraserTool" title="Eraser (E)">🧹</button>
                 </div>
-            </div>
-            
-            <div class="tool-group">
-                <label class="tool-label">Color</label>
-                <div class="color-picker-container">
-                    <input type="color" id="colorPicker" value="#000000" title="Pick Color">
-                    <div class="preset-colors">
-                        <button class="color-preset active" data-color="#000000" style="background:#000000" title="Black"></button>
-                        <button class="color-preset" data-color="#EF4444" style="background:#EF4444" title="Red"></button>
-                        <button class="color-preset" data-color="#F59E0B" style="background:#F59E0B" title="Orange"></button>
-                        <button class="color-preset" data-color="#10B981" style="background:#10B981" title="Green"></button>
-                        <button class="color-preset" data-color="#3B82F6" style="background:#3B82F6" title="Blue"></button>
-                        <button class="color-preset" data-color="#8B5CF6" style="background:#8B5CF6" title="Purple"></button>
+                
+                <!-- Color & Stroke -->
+                <div class="tool-group compact">
+                    <input type="color" id="colorPicker" value="#000000" title="Pick Color" class="color-input">
+                    <div class="preset-colors-compact">
+                        <button class="color-preset-compact active" data-color="#000000" style="background:#000000" title="Black"></button>
+                        <button class="color-preset-compact" data-color="#EF4444" style="background:#EF4444" title="Red"></button>
+                        <button class="color-preset-compact" data-color="#F59E0B" style="background:#F59E0B" title="Orange"></button>
+                        <button class="color-preset-compact" data-color="#10B981" style="background:#10B981" title="Green"></button>
+                        <button class="color-preset-compact" data-color="#3B82F6" style="background:#3B82F6" title="Blue"></button>
+                        <button class="color-preset-compact" data-color="#8B5CF6" style="background:#8B5CF6" title="Purple"></button>
                     </div>
                 </div>
+                
+                <!-- Stroke Width -->
+                <div class="tool-group compact">
+                    <input type="range" id="strokeWidth" min="1" max="50" value="3" class="stroke-slider-compact" title="Stroke Width">
+                    <span id="strokeValue" class="stroke-value">3</span>
+                </div>
+                
+                <!-- Zoom Controls -->
+                <div class="tool-group compact">
+                    <button class="zoom-btn-compact" id="zoomOut" title="Zoom Out (−)">−</button>
+                    <span id="zoomLevel" class="zoom-level-compact">100%</span>
+                    <button class="zoom-btn-compact" id="zoomIn" title="Zoom In (+)">+</button>
+                    <button class="zoom-btn-compact" id="zoomReset" title="Reset Zoom (0)">⊗</button>
+                </div>
+                
+                <!-- Edit Controls -->
+                <div class="tool-group compact">
+                    <button class="edit-btn-compact" id="undoBtn" title="Undo (Ctrl+Z)">↶</button>
+                    <button class="edit-btn-compact" id="redoBtn" title="Redo (Ctrl+Y)">↷</button>
+                </div>
+                
+                <!-- More Options Menu -->
+                <div class="tool-group compact">
+                    <button class="menu-btn" id="moreOptionsBtn" title="More Options">⋮</button>
+                </div>
             </div>
             
-            <div class="tool-group">
-                <label class="tool-label">Stroke: <span id="strokeValue">3</span>px</label>
-                <input type="range" id="strokeWidth" min="1" max="50" value="3" class="stroke-slider">
-            </div>
-            
-            <div class="tool-group">
-                <label class="tool-label">Actions</label>
-                <div class="action-buttons">
-                    <button class="action-btn" id="clearCanvas" title="Clear Canvas (C)">
-                        <span class="action-icon">🗑️</span>
-                        Clear All
-                    </button>
-                    <button class="action-btn" id="downloadCanvas" title="Download (D)">
-                        <span class="action-icon">💾</span>
-                        Save
-                    </button>
+            <!-- Row 2: Additional Options (Collapsible) -->
+            <div class="toolbar-row secondary hidden" id="toolbarSecondary">
+                <!-- Line Style -->
+                <div class="tool-group compact">
+                    <select id="lineStyle" class="style-select-compact" title="Line Style">
+                        <option value="solid">━</option>
+                        <option value="dashed">─ ─</option>
+                        <option value="dotted">· · ·</option>
+                    </select>
+                </div>
+                
+                <!-- Canvas Controls -->
+                <div class="tool-group compact">
+                    <button class="canvas-btn-compact" id="gridToggle" title="Grid (G)">⊞</button>
+                    <button class="canvas-btn-compact" id="snapToggle" title="Snap (S)">🧲</button>
+                    <button class="canvas-btn-compact" id="minimapToggle" title="Minimap (M)">🗺️</button>
+                </div>
+                
+                <!-- Actions -->
+                <div class="tool-group compact">
+                    <button class="action-btn-compact" id="clearCanvas" title="Clear (Delete)">🗑️</button>
+                    <button class="action-btn-compact" id="downloadCanvas" title="Save PNG">💾</button>
+                    <button class="action-btn-compact" id="downloadPDF" title="Save PDF">📄</button>
                 </div>
             </div>
         </div>
@@ -117,6 +148,7 @@
         <!-- Canvas Container -->
         <div class="canvas-container" id="canvasContainer">
             <canvas id="whiteboard"></canvas>
+            <div id="userCursorsContainer"></div>
             <div class="canvas-overlay" id="canvasOverlay">
                 <div class="overlay-content">
                     <div class="spinner"></div>
@@ -124,6 +156,22 @@
                 </div>
             </div>
         </div>
+        
+        <!-- Chat Panel -->
+        <div class="chat-panel" id="chatPanel">
+            <div class="chat-header">
+                <h3>Chat</h3>
+                <button class="chat-close" id="closeChatBtn">✕</button>
+            </div>
+            <div class="chat-messages" id="chatMessages"></div>
+            <div class="chat-input-area">
+                <input type="text" id="chatInput" placeholder="Type a message..." maxlength="256">
+                <button id="sendChatBtn" title="Send (Enter)">Send</button>
+            </div>
+        </div>
+        
+        <!-- Chat Toggle Button -->
+        <button class="chat-toggle" id="chatToggle" title="Open Chat">💬</button>
         
         <!-- Footer -->
         <footer class="footer">
