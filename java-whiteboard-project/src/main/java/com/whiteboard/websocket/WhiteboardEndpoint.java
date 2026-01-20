@@ -584,13 +584,10 @@ public class WhiteboardEndpoint {
             }
         }
         
-        // Broadcast to room members or all connected clients
+        // Broadcast to room members only
         String broadcastMessage = event.toJson();
-        
         if (room != null) {
             broadcastToRoom(room, broadcastMessage, null);
-        } else {
-            broadcast(broadcastMessage);
         }
     }
     
@@ -632,11 +629,9 @@ public class WhiteboardEndpoint {
             }
         }
         
-        // Broadcast to room members or all connected clients
+        // Broadcast to room members only
         if (room != null) {
             broadcastToRoom(room, message, null);
-        } else {
-            broadcast(message);
         }
     }
     
@@ -673,14 +668,11 @@ public class WhiteboardEndpoint {
             drawingEventDAO.clearAllEvents();
         }
         
-        // Broadcast clear command
+        // Broadcast clear command to room only
         String clearMessage = "{\"type\":\"clear\"}";
-        
         Room room = roomCode != null ? rooms.get(roomCode) : null;
         if (room != null) {
             broadcastToRoom(room, clearMessage, null);
-        } else {
-            broadcast(clearMessage);
         }
     }
     

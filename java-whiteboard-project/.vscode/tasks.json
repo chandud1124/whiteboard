@@ -1,0 +1,10 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Start Tomcat Server",
+			"type": "shell",
+			"command": "mvn org.apache.tomcat.maven:tomcat7-maven-plugin:2.2:run"
+		}
+	]
+}
