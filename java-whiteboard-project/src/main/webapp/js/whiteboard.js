@@ -305,6 +305,8 @@
             // Initial setup - clear canvas
             state.ctx.fillStyle = '#FFFFFF';
             state.ctx.fillRect(0, 0, state.canvas.width, state.canvas.height);
+            // Save initial blank canvas state for undo functionality
+            saveHistoryState();
         }
     }
 
@@ -1289,8 +1291,12 @@
         state.lastX = coords.x;
         state.lastY = coords.y;
         
+        // Save history state for drawing tools (pen, eraser, highlighter)
+        if (['pen', 'eraser', 'highlighter'].includes(state.currentTool)) {
+            saveHistoryState();
+        }
         // For shapes, mark the start point and save canvas state
-        if (['line', 'rectangle', 'circle', 'arrow'].includes(state.currentTool)) {
+        else if (['line', 'rectangle', 'circle', 'arrow'].includes(state.currentTool)) {
             state.shapeStart = { x: coords.x, y: coords.y };
             state.shapePreviewActive = true;
             state.shapePreviewData = state.ctx.getImageData(0, 0, state.canvas.width, state.canvas.height);
