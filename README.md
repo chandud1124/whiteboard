@@ -1,8 +1,26 @@
-# 🎨 Collaborative Whiteboard - Full-Featured Real-Time Drawing Application
+# Collaborative Whiteboard
 
-A **powerful, feature-rich collaborative whiteboard** built with Java/Tomcat backend and vanilla JavaScript frontend. Draw together in real-time with live cursors, chat, and room-based collaboration.
+A powerful, feature-rich collaborative whiteboard application built with Java/Tomcat backend and vanilla JavaScript frontend. Draw together in real-time with live cursors, chat, and room-based collaboration.
 
-## ✨ Key Features
+![License](https://img.shields.io/badge/license-MIT-blue.svg)
+![Java](https://img.shields.io/badge/java-21+-orange.svg)
+![Status](https://img.shields.io/badge/status-active-success.svg)
+
+## About This Project
+
+This project was built for **academic purposes** while learning **Advanced Java** at **Anudip Foundation**. It demonstrates practical application of enterprise-level Java concepts including WebSockets, database connectivity, servlet architecture, and real-time multi-user synchronization.
+
+## Table of Contents
+
+- [Features](#key-features)
+- [Quick Start](#quick-start)
+- [Architecture](#architecture)
+- [Keyboard Shortcuts](#keyboard-shortcuts)
+- [Troubleshooting](#troubleshooting)
+- [Contributing](#contributing)
+- [License](#license)
+
+## Key Features
 
 ### Drawing Tools (8 Total)
 - **Pen** (P) - Free-hand drawing
@@ -32,33 +50,49 @@ A **powerful, feature-rich collaborative whiteboard** built with Java/Tomcat bac
 ✅ **Responsive Design** |
 ✅ **Connection Status** indicators
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
-```bash
-# Required tools
-- JDK 21+ (openjdk via Homebrew)
-- Maven 3.6+
-- MySQL 8.0+
-- Tomcat 9.0
-```
 
-### Installation (1 minute)
+- **JDK 21+** (openjdk via Homebrew)
+- **Maven 3.6+**
+- **MySQL 8.0+**
+- **Tomcat 9.0+**
+
+### Installation Steps
+
 ```bash
-# 1. Initialize database
+# 1. Clone the repository (if applicable)
+cd whiteboard
+
+# 2. Initialize database
 mysql -u root -p whiteboard_db < java-whiteboard-project/sql/schema.sql
 
-# 2. Build project
+# 3. Build project
 cd java-whiteboard-project && mvn clean package -DskipTests
 
-# 3. Deploy to Tomcat 9
+# 4. Deploy to Tomcat 9
 cp target/whiteboard.war /opt/homebrew/opt/tomcat@9/libexec/webapps/
 
-# 4. Start Tomcat (if not running)
+# 5. Start Tomcat (if not running)
 JAVA_HOME=$(brew --prefix openjdk) /opt/homebrew/opt/tomcat@9/libexec/bin/catalina.sh start
 
-# 5. Open browser
+# 6. Open your browser
 # http://localhost:8080/whiteboard/
+```
+
+### Running with Development Server
+
+```bash
+# Terminal 1: Start MySQL
+mysql -u root
+
+# Terminal 2: Start Tomcat in foreground
+cd java-whiteboard-project
+JAVA_HOME=$(brew --prefix openjdk) /opt/homebrew/opt/tomcat@9/libexec/bin/catalina.sh run
+
+# Terminal 3: Access the application
+open http://localhost:8080/whiteboard/
 ```
 
 ## 📋 Feature Breakdown
@@ -178,23 +212,34 @@ M                    // Show mini-map
 0                    // Reset to 100%
 ```
 
-## 🔧 Configuration
+## Configuration
 
-### Database
-Edit `DatabaseConnection.java`:
+### Database Setup
+
+Edit `src/main/java/com/whiteboard/util/DatabaseConnection.java`:
+
 ```java
 String url = "jdbc:mysql://localhost:3306/whiteboard_db";
 String user = "root";
-String password = "";
+String password = "";  // Add your password
 ```
 
-### Tomcat Ports
-Default: 8080 (modify `server.xml`)
+### Tomcat Configuration
 
-### WebSocket
-Endpoint configured in `WhiteboardEndpoint.java`:
+Default port is **8080**. To change:
+1. Edit `/opt/homebrew/opt/tomcat@9/libexec/conf/server.xml`
+2. Find `<Connector port="8080"` and modify the port number
+3. Restart Tomcat
+
+### WebSocket Configuration
+
+WebSocket endpoint is configured in `WhiteboardEndpoint.java`:
+
 ```java
 @ServerEndpoint("/whiteboard")
+public class WhiteboardEndpoint {
+    // Configuration details...
+}
 ```
 
 ## 📈 Performance
@@ -220,22 +265,29 @@ Endpoint configured in `WhiteboardEndpoint.java`:
 
 See the java-whiteboard-project/README.md for detailed setup and technical information.
 
-## 📦 Project Structure
+## Project Structure
 
 ```
 whiteboard/
 ├── java-whiteboard-project/
-│   ├── src/main/java/com/whiteboard/
-│   │   ├── websocket/WhiteboardEndpoint.java
-│   │   ├── dao/UserDAO.java, DrawingEventDAO.java
-│   │   └── util/DatabaseConnection.java
-│   ├── src/main/webapp/
-│   │   ├── index.html
-│   │   ├── css/style.css
-│   │   └── js/whiteboard.js
-│   ├── sql/schema.sql
-│   └── pom.xml
-└── README.md (this file)
+│   ├── src/
+│   │   ├── main/java/com/whiteboard/
+│   │   │   ├── dao/           # Data Access Objects
+│   │   │   ├── model/         # Entity models
+│   │   │   ├── util/          # Utilities & database connection
+│   │   │   └── websocket/     # WebSocket endpoint
+│   │   └── main/webapp/
+│   │       ├── index.html     # Main page
+│   │       ├── css/style.css  # Styling
+│   │       ├── js/whiteboard.js # Frontend logic
+│   │       └── WEB-INF/
+│   ├── sql/
+│   │   ├── schema.sql         # Database schema
+│   │   └── insert_users.sql   # Sample data
+│   ├── pom.xml                # Maven configuration
+│   └── run-dev.sh             # Development startup script
+├── LICENSE                    # MIT License
+└── README.md                  # This file
 ```
 
 ## 🔐 Security
@@ -269,36 +321,39 @@ open http://localhost:8080/whiteboard/
 6. Implement rate limiting
 7. Add database backups
 
-## 📄 License
+## Contributing
 
-MIT License - See LICENSE file
+Contributions are welcome! Please follow these steps:
 
-## 👨‍💻 Contributing
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
-Contributions welcome! See CONTRIBUTING.md
+### Development Guidelines
 
-## 🙏 Acknowledgments
+- Follow existing code style
+- Test changes locally before submitting
+- Update documentation as needed
+- Keep commits atomic and descriptive
 
-- Java WebSocket API (javax.websocket)
-- Tomcat 9 servlet container
-- MySQL relational database
-- Modern browser Canvas 2D API
+## FAQ
 
-## 📞 Support
+**Q: Can I use this on mobile?**
+A: Yes! The application is fully responsive and supports touch events on tablets and mobile devices.
 
-- **Issues**: GitHub Issues
-- **Documentation**: See /docs folder
-- **Email**: support@whiteboard.local
+**Q: How many users can collaborate simultaneously?**
+A: The application has been tested with 5+ concurrent users. Performance may vary based on your server hardware.
 
----
+**Q: Can I export my drawings?**
+A: Yes, you can export drawings as PNG images using the export button in the toolbar.
 
-### Version Information
-- **Version**: 1.0.0
-- **Last Updated**: January 19, 2026
-- **Status**: Production Ready
-- **Features Implemented**: 65+
+**Q: How do I change the database password?**
+A: Update the `DatabaseConnection.java` file with your MySQL credentials.
 
-**Happy Collaborating! 🎨**
+## License
 
+## License
 
-
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
