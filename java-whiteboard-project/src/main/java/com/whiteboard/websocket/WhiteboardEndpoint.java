@@ -215,11 +215,17 @@ public class WhiteboardEndpoint {
                 case "shape":
                     handleShapeEvent(message, senderSession);
                     break;
+                case "text":
+                    handleTextEvent(message, senderSession);
+                    break;
                 case "chat":
                     handleChatMessage(message, senderSession);
                     break;
                 case "clear":
                     handleClearCanvas(message, senderSession);
+                    break;
+                case "canvasState":
+                    handleCanvasState(message, senderSession);
                     break;
                 case "ping":
                     handlePing(senderSession);
@@ -1132,6 +1138,63 @@ public class WhiteboardEndpoint {
             }
         }
     }
+
+    /**
+     * Handle text drawing events (labels) and broadcast to room/board peers
+     */
+    private void handleTextEvent(String message, Session senderSession) {
+        String roomCode = sessionToRoom.get(senderSession.getId());
+        Room room = roomCode != null ? rooms.get(roomCode) : null;
+
+        // Only allow approved users in rooms
+        if (room != null && !room.isApproved(senderSession)) {
+            return;
+        }
+
+        Long boardId = extractLong(message, "boardId");
+        if (boardId == null) {
+            boardId = sessionToBoard.get(senderSession.getId());
+        }
+
+        String username = extractField(message, "username");
+        if (username == null || username.isEmpty()) {
+            username = sessionToUsername.get(senderSession.getId());
+        }
+
+        StringBuilder builder = new StringBuilder();
+        builder.append("{\"type\":\"text\"");
+        builder.append(",\"x\":").append(extractInt(message, "x"));
+        builder.append(",\"y\":").append(extractInt(message, "y"));
+        builder.append(",\"text\":").append(toJsonString(extractField(message, "text")));
+        builder.append(",\"color\":").append(toJsonString(extractField(message, "color")));
+        builder.append(",\"size\":").append(extractInt(message, "size"));
+        if (username != null) {
+            builder.append(",\"username\":").append(toJsonString(username));
+        }
+        builder.append(",\"boardId\":");
+        if (boardId != null) {
+            builder.append(boardId);
+        } else {
+            builder.append("null");
+        }
+        builder.append(",\"roomCode\":");
+        if (roomCode != null) {
+            builder.append(toJsonString(roomCode));
+        } else {
+            builder.append("null");
+        }
+        builder.append('}');
+
+        String payload = builder.toString();
+
+        if (room != null) {
+            broadcastToRoom(room, payload, senderSession);
+        } else if (boardId != null) {
+            broadcastToBoard(boardId, payload, senderSession);
+        } else {
+            broadcast(payload);
+        }
+    }
     
     /**
      * Handle chat message
@@ -1204,6 +1267,74 @@ public class WhiteboardEndpoint {
         }
     }
     
+    /**
+     * Handle synchronized canvas state messages (undo, redo, clear, snapshot restores)
+     */
+    private void handleCanvasState(String message, Session senderSession) {
+        String action = extractField(message, "action");
+        if (action == null || action.isEmpty()) {
+            return;
+        }
+
+        String roomCodeFromMessage = extractField(message, "roomCode");
+        if (roomCodeFromMessage != null && "null".equalsIgnoreCase(roomCodeFromMessage.trim())) {
+            roomCodeFromMessage = null;
+        }
+        String mappedRoomCode = sessionToRoom.get(senderSession.getId());
+        String roomCode = roomCodeFromMessage != null ? roomCodeFromMessage : mappedRoomCode;
+
+        Long boardId = extractLong(message, "boardId");
+        if (boardId == null) {
+            boardId = sessionToBoard.get(senderSession.getId());
+        }
+
+        if (roomCode == null && boardId == null) {
+            return;
+        }
+
+        Room room = roomCode != null ? rooms.get(roomCode) : null;
+        if (room != null && !room.isApproved(senderSession)) {
+            return;
+        }
+
+        String canvasData = extractField(message, "canvasData");
+
+        if (room != null && canvasData != null) {
+            room.setBoardCanvas(canvasData);
+        }
+
+        StringBuilder builder = new StringBuilder();
+        builder.append("{\"type\":\"canvasState\",\"action\":")
+               .append(toJsonString(action));
+
+        builder.append(",\"boardId\":");
+        if (boardId != null) {
+            builder.append(boardId);
+        } else {
+            builder.append("null");
+        }
+
+        builder.append(",\"roomCode\":");
+        if (roomCode != null) {
+            builder.append(toJsonString(roomCode));
+        } else {
+            builder.append("null");
+        }
+
+        if (canvasData != null) {
+            builder.append(",\"canvasData\":").append(toJsonString(canvasData));
+        }
+
+        builder.append('}');
+        String payload = builder.toString();
+
+        if (room != null) {
+            broadcastToRoom(room, payload, senderSession);
+        } else if (boardId != null) {
+            broadcastToBoard(boardId, payload, senderSession);
+        }
+    }
+
     /**
      * Handle ping message (keep-alive)
      */

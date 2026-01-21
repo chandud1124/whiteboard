@@ -90,6 +90,7 @@
         historyEventCount: 0,
         lastReceivedCanvasSnapshot: null,
         shouldRestoreSnapshotAfterHistory: false,
+        isApplyingRemoteCanvasState: false,
         
         // Collaboration - Live cursors
         userCursors: {},
@@ -733,11 +734,18 @@
         state.lastReceivedCanvasSnapshot = canvasData;
         const img = new Image();
         img.onload = () => {
-            state.ctx.clearRect(0, 0, state.canvas.width, state.canvas.height);
-            state.ctx.drawImage(img, 0, 0);
-            saveHistoryState();
-            state.hasUnsavedChanges = false;
-            updateSaveStatus('saved');
+            state.isApplyingRemoteCanvasState = true;
+            try {
+                state.ctx.clearRect(0, 0, state.canvas.width, state.canvas.height);
+                state.ctx.drawImage(img, 0, 0);
+                state.history = [];
+                state.historyIndex = -1;
+                saveHistoryState();
+                state.hasUnsavedChanges = false;
+                updateSaveStatus('saved');
+            } finally {
+                state.isApplyingRemoteCanvasState = false;
+            }
         };
         img.onerror = () => {
             console.error('Failed to load board image');
@@ -1012,15 +1020,15 @@
         state.canvas.addEventListener('touchmove', handleTouchMove);
         state.canvas.addEventListener('touchend', stopDrawing);
         
-        // Tool buttons - Drawing tools
-        elements.penTool.addEventListener('click', () => selectTool('pen'));
-        elements.lineTool.addEventListener('click', () => selectTool('line'));
-        elements.rectangleTool.addEventListener('click', () => selectTool('rectangle'));
-        elements.circleTool.addEventListener('click', () => selectTool('circle'));
-        elements.arrowTool.addEventListener('click', () => selectTool('arrow'));
-        elements.highlighterTool.addEventListener('click', () => selectTool('highlighter'));
-        elements.textTool.addEventListener('click', () => selectTool('text'));
-        elements.eraserTool.addEventListener('click', () => selectTool('eraser'));
+          // Tool buttons - Drawing tools
+          elements.penTool.addEventListener('click', () => selectTool('pen'));
+          elements.lineTool.addEventListener('click', () => selectTool('line'));
+          elements.rectangleTool.addEventListener('click', () => selectTool('rectangle'));
+          elements.circleTool.addEventListener('click', () => selectTool('circle'));
+          elements.arrowTool.addEventListener('click', () => selectTool('arrow'));
+          elements.highlighterTool.addEventListener('click', () => selectTool('highlighter'));
+          elements.textTool.addEventListener('click', () => selectTool('text'));
+          elements.eraserTool.addEventListener('click', () => selectTool('eraser'));
         
         // Style controls
         elements.lineStyle.addEventListener('change', (e) => {
@@ -1660,6 +1668,9 @@
                     if (state.isReceivingHistory) {
                         state.historyEventCount++;
                     }
+                    if (!matchesCurrentBoard(data.boardId)) {
+                        break;
+                    }
                     state.ctx.fillStyle = data.color;
                     state.ctx.font = data.size + 'px monospace';
                     state.ctx.fillText(data.text, data.x, data.y);
@@ -1681,6 +1692,7 @@
                     const sameRoom = !data.roomCode || !state.roomCode || data.roomCode === state.roomCode;
                     if (sameBoard && sameRoom) {
                         clearCanvasLocal();
+                        saveHistoryState();
                         showNotification('Canvas cleared', 'info');
                     }
                     break;
@@ -1708,6 +1720,15 @@
                     state.shouldRestoreSnapshotAfterHistory = false;
                     state.historyEventCount = 0;
                     showNotification('Canvas history loaded', 'success');
+                    break;
+
+                case 'canvasState':
+                    if (!matchesCurrentBoard(data.boardId)) {
+                        break;
+                    }
+                    if (data.canvasData) {
+                        applyBoardCanvasSnapshot(data.canvasData);
+                    }
                     break;
                     
                 case 'pong':
@@ -2367,7 +2388,7 @@
             state.shapePreviewData = state.ctx.getImageData(0, 0, state.canvas.width, state.canvas.height);
             saveHistoryState();
         } else if (state.currentTool === 'text') {
-            createTextInput(coords.x, coords.y);
+            createTextInput(coords.x, coords.y, e.clientX, e.clientY);
             state.isDrawing = false;
         }
     }
@@ -2435,6 +2456,7 @@
         
         state.isDrawing = false;
         let didModify = false;
+        let historySaved = false;
         
         // For shapes, finalize or cancel the drawing
         if (state.shapeStart && ['line', 'rectangle', 'circle', 'arrow'].includes(state.currentTool)) {
@@ -2480,6 +2502,7 @@
                 }
                 
                 saveHistoryState();
+                historySaved = true;
                 didModify = true;
             } else {
                 // Cancel shape - restore original canvas state
@@ -2498,6 +2521,9 @@
         }
 
         if (didModify) {
+            if (!historySaved) {
+                saveHistoryState();
+            }
             markDirty();
         }
     }
@@ -2678,15 +2704,16 @@
         return { x, y };
     }
 
-    function createTextInput(x, y) {
+    function createTextInput(x, y, screenX, screenY) {
         const input = document.createElement('input');
         input.type = 'text';
         input.style.position = 'absolute';
         
         // Position relative to canvas
-        const canvasRect = state.canvas.getBoundingClientRect();
-        input.style.left = (canvasRect.left + x) + 'px';
-        input.style.top = (canvasRect.top + y) + 'px';
+        const posX = typeof screenX === 'number' ? screenX : (state.canvas.getBoundingClientRect().left + x * state.zoom);
+        const posY = typeof screenY === 'number' ? screenY : (state.canvas.getBoundingClientRect().top + y * state.zoom);
+        input.style.left = posX + 'px';
+        input.style.top = posY + 'px';
         
         input.style.fontSize = state.strokeWidth * 4 + 'px';
         input.style.color = state.currentColor;
@@ -2712,7 +2739,10 @@
                     y: y,
                     text: input.value,
                     color: state.currentColor,
-                    size: state.strokeWidth * 4
+                    size: state.strokeWidth * 4,
+                    boardId: state.currentBoardId || null,
+                    roomCode: state.roomCode || null,
+                    username: state.username || 'Anonymous'
                 });
             }
             document.body.removeChild(input);
@@ -2880,7 +2910,7 @@
             state.history.shift();
             state.historyIndex--;
         }
-        
+
         updateHistoryButtons();
     }
 
@@ -2891,6 +2921,7 @@
             state.ctx.putImageData(imageData, 0, 0);
             updateHistoryButtons();
             markDirty();
+            broadcastCanvasSnapshot('undo');
         }
     }
 
@@ -2901,12 +2932,41 @@
             state.ctx.putImageData(imageData, 0, 0);
             updateHistoryButtons();
             markDirty();
+            broadcastCanvasSnapshot('redo');
         }
     }
 
     function updateHistoryButtons() {
         elements.undoBtn.classList.toggle('disabled', state.historyIndex <= 0);
         elements.redoBtn.classList.toggle('disabled', state.historyIndex >= state.history.length - 1);
+    }
+
+    function broadcastCanvasSnapshot(action, snapshotData) {
+        if (state.isApplyingRemoteCanvasState) {
+            return;
+        }
+        if (!state.socket || state.socket.readyState !== WebSocket.OPEN) {
+            return;
+        }
+
+        const roomCode = state.roomCode || null;
+        const boardId = state.currentBoardId || null;
+
+        if (!roomCode && !boardId) {
+            return;
+        }
+
+        const canvasData = snapshotData || state.canvas.toDataURL('image/png');
+
+        const payload = {
+            type: 'canvasState',
+            action: action,
+            canvasData: canvasData,
+            roomCode: roomCode,
+            boardId: boardId
+        };
+
+        state.socket.send(JSON.stringify(payload));
     }
 
     // ========================================
@@ -2944,6 +3004,7 @@
             }));
             clearCanvasLocal();
             saveHistoryState();
+            broadcastCanvasSnapshot('clear');
             markDirty();
         }
     }
@@ -2989,6 +3050,9 @@
     }
 
     function markDirty() {
+        if (state.isApplyingRemoteCanvasState) {
+            return;
+        }
         state.hasUnsavedChanges = true;
         scheduleAutoSave();
     }
@@ -3007,6 +3071,7 @@
     }
 
     function performAutoSave(reason) {
+        if (state.isApplyingRemoteCanvasState) return;
         if (!state.hasUnsavedChanges) return;
         if (!state.isLoggedIn || !state.currentBoardId) return;
         if (!state.socket || state.socket.readyState !== WebSocket.OPEN) return;
@@ -3028,6 +3093,7 @@
     function syncBoardStateForRoomShare(boardId, options = {}) {
         if (!state.currentBoardId) return false;
         if (!state.socket || state.socket.readyState !== WebSocket.OPEN) return false;
+        if (state.isApplyingRemoteCanvasState) return false;
 
         const numericBoardId = Number(boardId);
         if (!Number.isFinite(numericBoardId) || numericBoardId <= 0) {
