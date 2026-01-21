@@ -9,20 +9,161 @@
     <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
+    <!-- Welcome/Entry Modal -->
+    <div class="modal" id="welcomeModal">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content welcome-modal">
+            <div class="welcome-header">
+                <div class="welcome-logo">✏️</div>
+                <h1>Professional Whiteboard</h1>
+                <p>Create, collaborate, and bring your ideas to life</p>
+            </div>
+            <div class="welcome-body">
+                <div class="welcome-options">
+                    <button class="welcome-btn guest" id="continueAsGuest">
+                        <span class="btn-icon">🚀</span>
+                        <span class="btn-title">Continue as Guest</span>
+                        <span class="btn-subtitle">Start drawing immediately • No account needed</span>
+                        <span class="btn-note">⚠️ Work will be lost when you leave</span>
+                    </button>
+                    <div class="welcome-divider">
+                        <span>or</span>
+                    </div>
+                    <button class="welcome-btn login" id="welcomeLogin">
+                        <span class="btn-icon">🔐</span>
+                        <span class="btn-title">Login / Register</span>
+                        <span class="btn-subtitle">Save your work permanently • Multiple boards</span>
+                        <span class="btn-note">✓ Full features • Auto-save • Access anywhere</span>
+                    </button>
+                </div>
+                <div class="welcome-features">
+                    <h3>What you can do:</h3>
+                    <ul>
+                        <li>✏️ Draw with pen, shapes, and text tools</li>
+                        <li>🎨 Customize colors and stroke width</li>
+                        <li>👥 Real-time collaboration with rooms</li>
+                        <li>💾 Save and manage multiple boards (Login required)</li>
+                        <li>📤 Export to PNG/PDF</li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Guest Mode Banner (shown to guest users) -->
+    <div class="guest-banner hidden" id="guestBanner">
+        <div class="guest-banner-content">
+            <span class="guest-icon">⚠️</span>
+            <span class="guest-message">You're in Guest Mode. Your work will be lost when you leave.</span>
+            <button class="guest-login-btn" id="guestLoginPrompt">Login to Save</button>
+            <button class="guest-banner-close" id="closeGuestBanner">&times;</button>
+        </div>
+    </div>
+
+    <!-- Boards Dashboard (shown to logged-in users) -->
+    <div class="boards-dashboard hidden" id="boardsDashboard">
+        <div class="dashboard-container">
+            <div class="dashboard-header">
+                <div class="dashboard-title">
+                    <h1>📋 My Whiteboards</h1>
+                    <p>Manage your creative projects</p>
+                </div>
+                <div class="dashboard-actions">
+                    <button class="btn-primary" id="createNewBoardBtn">
+                        <span>➕</span> New Board
+                    </button>
+                    <button class="btn-secondary" id="dashboardCreateRoomBtn">
+                        <span>🏠</span> Create Room
+                    </button>
+                    <button class="btn-secondary" id="dashboardJoinRoomBtn">
+                        <span>🔗</span> Join Room
+                    </button>
+                    <button class="btn-secondary" id="dashboardLogoutBtn" title="Logout">
+                        <span>🚪</span> Logout
+                    </button>
+                </div>
+            </div>
+            
+            <div class="boards-grid" id="boardsGrid">
+                <!-- Boards will be dynamically loaded here -->
+            </div>
+            
+            <div class="empty-state hidden" id="emptyState">
+                <div class="empty-icon">📝</div>
+                <h2>No boards yet</h2>
+                <p>Create your first whiteboard to get started</p>
+                <button class="btn-primary" id="createFirstBoardBtn">
+                    <span>➕</span> Create Board
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create/Edit Board Modal -->
+    <div class="modal hidden" id="boardModal">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="boardModalTitle">Create New Board</h2>
+                <button class="modal-close" id="closeBoardModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="boardName">Board Name</label>
+                    <input type="text" id="boardName" class="form-input" placeholder="My Awesome Board" maxlength="100">
+                </div>
+                <div class="form-group">
+                    <label for="boardDescription">Description (optional)</label>
+                    <textarea id="boardDescription" class="form-input" rows="3" placeholder="What's this board for?" maxlength="255"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" id="cancelBoardModal">Cancel</button>
+                <button class="btn-primary" id="saveBoardBtn">Create Board</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div class="modal hidden" id="deleteBoardModal">
+        <div class="modal-backdrop"></div>
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Delete Board?</h2>
+                <button class="modal-close" id="closeDeleteModal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p>Are you sure you want to delete "<strong id="deleteBoardName"></strong>"?</p>
+                <p class="text-muted">This action cannot be undone.</p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-secondary" id="cancelDeleteBtn">Cancel</button>
+                <button class="btn-danger" id="confirmDeleteBtn">Delete</button>
+            </div>
+        </div>
+    </div>
+
     <div class="app-container">
         <!-- Header -->
         <header class="header">
             <div class="header-left">
-                <h1 class="logo">
+                <h1 class="logo" id="logoHome" style="cursor: pointer;" title="Back to Dashboard">
                     <span class="logo-icon">✏️</span>
                     Collaborative Whiteboard
                 </h1>
                 <div class="room-badge hidden" id="roomBadge">
-                    <span class="room-code" id="roomCodeDisplay">-</span>
+                    <div class="room-meta">
+                        <span class="room-code" id="roomCodeDisplay">-</span>
+                        <span class="room-board-title hidden" id="roomBoardTitle"></span>
+                    </div>
                     <button class="copy-btn" id="copyRoomCode" title="Copy room code">📋</button>
                 </div>
             </div>
             <div class="header-right">
+                <div class="save-status hidden" id="saveStatus">
+                    <span class="save-icon">💾</span>
+                    <span class="save-text">Saved</span>
+                </div>
                 <div class="connection-status" id="connectionStatus">
                     <span class="status-dot"></span>
                     <span class="status-text">Connecting...</span>
@@ -68,6 +209,10 @@
         <div class="toolbar">
             <!-- Row 1: Drawing Tools + Quick Controls -->
             <div class="toolbar-row primary">
+                <!-- Home -->
+                <div class="tool-group compact">
+                    <button class="tool-btn icon-only" id="homeBtn" title="Home">🏠</button>
+                </div>
                 <!-- Drawing Tools -->
                 <div class="tool-group compact">
                     <button class="tool-btn active icon-only" id="penTool" title="Pen (P)">✏️</button>
@@ -113,14 +258,10 @@
                     <button class="edit-btn-compact" id="redoBtn" title="Redo (Ctrl+Y)">↷</button>
                 </div>
                 
-                <!-- More Options Menu -->
-                <div class="tool-group compact">
-                    <button class="menu-btn" id="moreOptionsBtn" title="More Options">⋮</button>
                 </div>
-            </div>
             
-            <!-- Row 2: Additional Options (Collapsible) -->
-            <div class="toolbar-row secondary hidden" id="toolbarSecondary">
+            <!-- Row 2: Additional Options (Always Visible) -->
+            <div class="toolbar-row secondary" id="toolbarSecondary">
                 <!-- Line Style -->
                 <div class="tool-group compact">
                     <select id="lineStyle" class="style-select-compact" title="Line Style">
@@ -133,8 +274,6 @@
                 <!-- Canvas Controls -->
                 <div class="tool-group compact">
                     <button class="canvas-btn-compact" id="gridToggle" title="Grid (G)">⊞</button>
-                    <button class="canvas-btn-compact" id="snapToggle" title="Snap (S)">🧲</button>
-                    <button class="canvas-btn-compact" id="minimapToggle" title="Minimap (M)">🗺️</button>
                 </div>
                 
                 <!-- Actions -->

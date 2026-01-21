@@ -1,8 +1,12 @@
 package com.whiteboard.websocket;
 
+import com.whiteboard.dao.BoardDAO;
 import com.whiteboard.dao.DrawingEventDAO;
+import com.whiteboard.dao.GuestSessionDAO;
 import com.whiteboard.dao.UserDAO;
+import com.whiteboard.model.Board;
 import com.whiteboard.model.DrawingEvent;
+import com.whiteboard.model.GuestSession;
 import com.whiteboard.model.Room;
 import com.whiteboard.model.User;
 import com.whiteboard.util.AuthenticationUtil;
@@ -11,6 +15,7 @@ import com.whiteboard.util.DatabaseConnection;
 import javax.websocket.*;
 import javax.websocket.server.ServerEndpoint;
 import java.io.IOException;
+import java.sql.Timestamp;
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
@@ -40,9 +45,21 @@ public class WhiteboardEndpoint {
     
     // Session to Username mapping - sessionId -> username
     private static final ConcurrentHashMap<String, String> sessionToUsername = new ConcurrentHashMap<>();
+
+    // Auth token tracking - token -> userId and userId -> token
+    private static final ConcurrentHashMap<String, Long> authTokens = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<Long, String> userToToken = new ConcurrentHashMap<>();
+    
+    // Session to Board mapping - sessionId -> boardId (for authenticated users)
+    private static final ConcurrentHashMap<String, Long> sessionToBoard = new ConcurrentHashMap<>();
+    
+    // Guest session tracking - sessionId -> isGuest
+    private static final ConcurrentHashMap<String, Boolean> guestSessions = new ConcurrentHashMap<>();
     
     // DAOs for database operations
+    private static final BoardDAO boardDAO = new BoardDAO();
     private static final DrawingEventDAO drawingEventDAO = new DrawingEventDAO();
+    private static final GuestSessionDAO guestSessionDAO = new GuestSessionDAO();
     private static final UserDAO userDAO = new UserDAO();
     
     // Enable/disable database persistence (set to false if DB not configured)
@@ -71,6 +88,10 @@ public class WhiteboardEndpoint {
     public void onOpen(Session session) {
         sessions.add(session);
         String sessionId = session.getId();
+
+        // Increase max message size to support canvas auto-save payloads
+        session.setMaxTextMessageBufferSize(10 * 1024 * 1024);
+        session.setMaxBinaryMessageBufferSize(10 * 1024 * 1024);
         
         System.out.println("New connection: " + sessionId + " | Total clients: " + sessions.size());
         
@@ -133,15 +154,43 @@ public class WhiteboardEndpoint {
             String messageType = extractMessageType(message);
             
             switch (messageType) {
-                // Authentication
+                // Authentication & Guest
+                case "guestMode":
+                    handleGuestMode(message, senderSession);
+                    break;
                 case "register":
                     handleRegister(message, senderSession);
                     break;
                 case "login":
                     handleLogin(message, senderSession);
                     break;
+                case "restoreSession":
+                    handleRestoreSession(message, senderSession);
+                    break;
                 case "logout":
                     handleLogout(senderSession);
+                    break;
+                // Board Management
+                case "createBoard":
+                    handleCreateBoard(message, senderSession);
+                    break;
+                case "getBoards":
+                    handleGetBoards(senderSession);
+                    break;
+                case "openBoard":
+                    handleOpenBoard(message, senderSession);
+                    break;
+                case "saveBoard":
+                    handleSaveBoard(message, senderSession);
+                    break;
+                case "updateBoardTitle":
+                    handleUpdateBoardTitle(message, senderSession);
+                    break;
+                case "deleteBoard":
+                    handleDeleteBoard(message, senderSession);
+                    break;
+                case "duplicateBoard":
+                    handleDuplicateBoard(message, senderSession);
                     break;
                 // Room management
                 case "createRoom":
@@ -170,7 +219,7 @@ public class WhiteboardEndpoint {
                     handleChatMessage(message, senderSession);
                     break;
                 case "clear":
-                    handleClearCanvas(senderSession);
+                    handleClearCanvas(message, senderSession);
                     break;
                 case "ping":
                     handlePing(senderSession);
@@ -315,6 +364,13 @@ public class WhiteboardEndpoint {
         
         try {
             String token = AuthenticationUtil.generateToken();
+
+            String existingToken = userToToken.put(user.getId(), token);
+            if (existingToken != null) {
+                authTokens.remove(existingToken);
+            }
+            authTokens.put(token, user.getId());
+
             String response = String.format(
                 "{\"type\":\"loginSuccess\",\"userId\":%d,\"username\":\"%s\",\"displayName\":\"%s\",\"token\":\"%s\"}",
                 user.getId(), user.getUsername(), user.getDisplayName(), token
@@ -331,8 +387,18 @@ public class WhiteboardEndpoint {
      */
     private void handleLogout(Session session) {
         String sessionId = session.getId();
+        Long userId = sessionToUser.get(sessionId);
         sessionToUser.remove(sessionId);
         sessionToUsername.remove(sessionId);
+        sessionToBoard.remove(sessionId);
+        guestSessions.remove(sessionId);
+
+        if (userId != null) {
+            String token = userToToken.remove(userId);
+            if (token != null) {
+                authTokens.remove(token);
+            }
+        }
         
         try {
             session.getBasicRemote().sendText("{\"type\":\"logoutSuccess\"}");
@@ -341,6 +407,356 @@ public class WhiteboardEndpoint {
         }
         
         System.out.println("User logged out: " + sessionId);
+    }
+
+    /**
+     * Handle session restore request (reconnect with token)
+     */
+    private void handleRestoreSession(String message, Session session) {
+        String token = extractField(message, "token");
+
+        if (token == null || token.isEmpty()) {
+            sendSessionRestoreFailed(session, "Session token missing. Please log in again.");
+            return;
+        }
+
+        Long userId = authTokens.get(token);
+        if (userId == null) {
+            sendSessionRestoreFailed(session, "Session expired. Please log in again.");
+            return;
+        }
+
+        Optional<User> userOpt = userDAO.findById(userId);
+        if (!userOpt.isPresent()) {
+            authTokens.remove(token);
+            userToToken.remove(userId);
+            sendSessionRestoreFailed(session, "Account not found. Please log in again.");
+            return;
+        }
+
+        User user = userOpt.get();
+        sessionToUser.put(session.getId(), userId);
+        sessionToUsername.put(session.getId(), user.getUsername());
+
+        try {
+            String response = String.format(
+                "{\"type\":\"sessionRestored\",\"userId\":%d,\"username\":\"%s\",\"displayName\":\"%s\",\"token\":\"%s\"}",
+                userId, user.getUsername(), user.getDisplayName(), token
+            );
+            session.getBasicRemote().sendText(response);
+            System.out.println("Session restored for user: " + user.getUsername());
+        } catch (IOException e) {
+            System.err.println("Error sending session restored response: " + e.getMessage());
+        }
+    }
+    
+    // ========================================
+    // Guest Mode Handler
+    // ========================================
+    
+    /**
+     * Handle guest mode activation
+     */
+    private void handleGuestMode(String message, Session session) {
+        String sessionId = session.getId();
+        guestSessions.put(sessionId, true);
+        
+        // Create temporary guest session (expires in 24 hours)
+        Timestamp expiresAt = new Timestamp(System.currentTimeMillis() + (24 * 60 * 60 * 1000));
+        GuestSession guestSession = new GuestSession(sessionId, expiresAt);
+        guestSessionDAO.createGuestSession(guestSession);
+        
+        try {
+            String response = String.format(
+                "{\"type\":\"guestModeActivated\",\"sessionId\":\"%s\",\"expiresAt\":\"%s\",\"message\":\"Login to save your work permanently\"}",
+                sessionId, expiresAt.toString()
+            );
+            session.getBasicRemote().sendText(response);
+            System.out.println("Guest mode activated for session: " + sessionId);
+        } catch (IOException e) {
+            System.err.println("Error sending guest mode response: " + e.getMessage());
+        }
+    }
+    
+    // ========================================
+    // Board Management Handlers
+    // ========================================
+    
+    /**
+     * Handle create board request
+     */
+    private void handleCreateBoard(String message, Session session) {
+        Long userId = sessionToUser.get(session.getId());
+        System.out.println("handleCreateBoard - sessionId: " + session.getId() + ", userId: " + userId);
+        
+        if (userId == null) {
+            System.out.println("User not logged in for board creation - sessionToUser map size: " + sessionToUser.size());
+            sendError(session, "You must be logged in to create a board");
+            return;
+        }
+        
+        String title = extractField(message, "title");
+        if (title == null || title.isEmpty()) {
+            title = "Untitled Board";
+        }
+        
+        String description = extractField(message, "description");
+        
+        Board board = new Board(userId, title);
+        board.setDescription(description);
+        long boardId = boardDAO.createBoard(board);
+        
+        if (boardId > 0) {
+            sessionToBoard.put(session.getId(), boardId);
+            try {
+                String response = String.format(
+                    "{\"type\":\"boardCreated\",\"boardId\":%d,\"title\":\"%s\"}",
+                    boardId, title
+                );
+                session.getBasicRemote().sendText(response);
+                System.out.println("Board created: " + boardId + " by user: " + userId);
+            } catch (IOException e) {
+                System.err.println("Error sending board created response: " + e.getMessage());
+            }
+        } else {
+            sendError(session, "Failed to create board");
+        }
+    }
+    
+    /**
+     * Handle get boards request (for dashboard)
+     */
+    private void handleGetBoards(Session session) {
+        Long userId = sessionToUser.get(session.getId());
+        System.out.println("handleGetBoards - sessionId: " + session.getId() + ", userId: " + userId);
+        
+        if (userId == null) {
+            System.out.println("User not logged in - sessionToUser map size: " + sessionToUser.size());
+            sendError(session, "You must be logged in to view boards");
+            return;
+        }
+        
+        List<Board> boards = boardDAO.getBoardsByUserId(userId);
+        
+        try {
+            StringBuilder response = new StringBuilder();
+            response.append("{\"type\":\"boardsList\",\"boards\":[");
+            
+            for (int i = 0; i < boards.size(); i++) {
+                Board board = boards.get(i);
+                response.append(String.format(
+                    "{\"id\":%d,\"title\":\"%s\",\"description\":\"%s\",\"thumbnail\":\"%s\",\"updatedAt\":\"%s\"}",
+                    board.getId(),
+                    board.getTitle(),
+                    board.getDescription() != null ? board.getDescription() : "",
+                    board.getThumbnail() != null ? board.getThumbnail() : "",
+                    board.getUpdatedAt() != null ? board.getUpdatedAt().toString() : ""
+                ));
+                if (i < boards.size() - 1) {
+                    response.append(",");
+                }
+            }
+            
+            response.append("]}");
+            session.getBasicRemote().sendText(response.toString());
+            System.out.println("Sent " + boards.size() + " boards to user: " + userId);
+        } catch (IOException e) {
+            System.err.println("Error sending boards list: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Handle open board request
+     */
+    private void handleOpenBoard(String message, Session session) {
+        Long userId = sessionToUser.get(session.getId());
+        
+        if (userId == null) {
+            sendError(session, "You must be logged in to open a board");
+            return;
+        }
+        
+        long boardId = extractInt(message, "boardId");
+        Optional<Board> boardOpt = boardDAO.getBoardById(boardId);
+        
+        if (!boardOpt.isPresent()) {
+            sendError(session, "Board not found");
+            return;
+        }
+        
+        Board board = boardOpt.get();
+        
+        // Verify ownership
+        if (!board.getUserId().equals(userId)) {
+            sendError(session, "Unauthorized: You don't own this board");
+            return;
+        }
+        
+        // Update last accessed
+        boardDAO.updateLastAccessed(boardId);
+        
+        // Set current board for session
+        sessionToBoard.put(session.getId(), boardId);
+        String ownerRoomCode = sessionToRoom.get(session.getId());
+        if (ownerRoomCode != null) {
+            Room ownerRoom = rooms.get(ownerRoomCode);
+            if (ownerRoom != null && ownerRoom.isOwner(session)) {
+                ownerRoom.setBoardMetadata(boardId, board.getTitle(), board.getCanvasData());
+            }
+        }
+        
+        try {
+            String response = String.format(
+                "{\"type\":\"boardOpened\",\"boardId\":%d,\"title\":%s,\"canvasData\":%s}",
+                board.getId(),
+                toJsonString(board.getTitle()),
+                toJsonString(board.getCanvasData())
+            );
+            session.getBasicRemote().sendText(response);
+            System.out.println("Board opened: " + boardId + " by user: " + userId);
+        } catch (IOException e) {
+            System.err.println("Error sending board opened response: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Handle save board request
+     */
+    private void handleSaveBoard(String message, Session session) {
+        Long userId = sessionToUser.get(session.getId());
+        Long boardId = sessionToBoard.get(session.getId());
+        
+        if (userId == null) {
+            sendError(session, "You must be logged in to save a board");
+            return;
+        }
+        
+        if (boardId == null) {
+            sendError(session, "No active board to save");
+            return;
+        }
+        
+        String canvasData = extractField(message, "canvasData");
+        
+        if (boardDAO.updateBoardData(boardId, canvasData)) {
+            try {
+                session.getBasicRemote().sendText("{\"type\":\"boardSaved\"}");
+                System.out.println("Board saved: " + boardId);
+            } catch (IOException e) {
+                System.err.println("Error sending board saved response: " + e.getMessage());
+            }
+
+            String roomCode = sessionToRoom.get(session.getId());
+            if (roomCode != null) {
+                Room room = rooms.get(roomCode);
+                if (room != null && room.isOwner(session)) {
+                    room.setBoardCanvas(canvasData);
+                }
+            }
+        } else {
+            sendError(session, "Failed to save board");
+        }
+    }
+    
+    /**
+     * Handle update board title
+     */
+    private void handleUpdateBoardTitle(String message, Session session) {
+        Long userId = sessionToUser.get(session.getId());
+        
+        if (userId == null) {
+            sendError(session, "You must be logged in");
+            return;
+        }
+        
+        long boardId = extractInt(message, "boardId");
+        String newTitle = extractField(message, "title");
+        
+        Optional<Board> boardOpt = boardDAO.getBoardById(boardId);
+        if (!boardOpt.isPresent() || !boardOpt.get().getUserId().equals(userId)) {
+            sendError(session, "Board not found or unauthorized");
+            return;
+        }
+        
+        Board board = boardOpt.get();
+        board.setTitle(newTitle);
+        
+        if (boardDAO.updateBoard(board)) {
+            try {
+                String response = String.format(
+                    "{\"type\":\"boardTitleUpdated\",\"boardId\":%d,\"title\":\"%s\"}",
+                    boardId, newTitle
+                );
+                session.getBasicRemote().sendText(response);
+            } catch (IOException e) {
+                System.err.println("Error sending title updated response: " + e.getMessage());
+            }
+
+            String roomCode = sessionToRoom.get(session.getId());
+            if (roomCode != null) {
+                Room room = rooms.get(roomCode);
+                if (room != null && room.isOwner(session)) {
+                    room.setBoardTitle(newTitle);
+                }
+            }
+        } else {
+            sendError(session, "Failed to update title");
+        }
+    }
+    
+    /**
+     * Handle delete board
+     */
+    private void handleDeleteBoard(String message, Session session) {
+        Long userId = sessionToUser.get(session.getId());
+        
+        if (userId == null) {
+            sendError(session, "You must be logged in");
+            return;
+        }
+        
+        long boardId = extractInt(message, "boardId");
+        
+        if (boardDAO.deleteBoard(boardId, userId)) {
+            try {
+                String response = String.format(
+                    "{\"type\":\"boardDeleted\",\"boardId\":%d}",
+                    boardId
+                );
+                session.getBasicRemote().sendText(response);
+                System.out.println("Board deleted: " + boardId);
+            } catch (IOException e) {
+                System.err.println("Error sending board deleted response: " + e.getMessage());
+            }
+        } else {
+            sendError(session, "Failed to delete board");
+        }
+    }
+    
+    /**
+     * Handle duplicate board
+     */
+    private void handleDuplicateBoard(String message, Session session) {
+        Long userId = sessionToUser.get(session.getId());
+        
+        if (userId == null) {
+            sendError(session, "You must be logged in");
+            return;
+        }
+        
+        long boardId = extractInt(message, "boardId");
+        
+        if (boardDAO.duplicateBoard(boardId, userId)) {
+            try {
+                session.getBasicRemote().sendText("{\"type\":\"boardDuplicated\"}");
+                // Send updated boards list
+                handleGetBoards(session);
+            } catch (IOException e) {
+                System.err.println("Error sending board duplicated response: " + e.getMessage());
+            }
+        } else {
+            sendError(session, "Failed to duplicate board");
+        }
     }
     
     // ========================================
@@ -353,14 +769,32 @@ public class WhiteboardEndpoint {
     private void handleCreateRoom(String message, Session session) {
         Room room = new Room(session);
         String roomCode = room.getRoomCode();
+
+        Long boardId = sessionToBoard.get(session.getId());
+        String boardTitle = null;
+        String boardCanvas = null;
+        if (boardId != null) {
+            Optional<Board> boardOpt = boardDAO.getBoardById(boardId);
+            if (boardOpt.isPresent()) {
+                Board board = boardOpt.get();
+                boardTitle = board.getTitle();
+                boardCanvas = board.getCanvasData();
+                room.setBoardMetadata(boardId, boardTitle, boardCanvas);
+            } else {
+                room.setBoardMetadata(boardId, null, null);
+            }
+        }
         
         rooms.put(roomCode, room);
         sessionToRoom.put(session.getId(), roomCode);
         
         try {
             String response = String.format(
-                "{\"type\":\"roomCreated\",\"roomCode\":\"%s\",\"roomId\":\"%s\",\"isOwner\":true}",
-                roomCode, room.getRoomId()
+                "{\"type\":\"roomCreated\",\"roomCode\":\"%s\",\"roomId\":\"%s\",\"isOwner\":true,\"boardId\":%s,\"boardTitle\":%s}",
+                roomCode,
+                room.getRoomId(),
+                boardId != null ? boardId.toString() : "null",
+                toJsonString(boardTitle)
             );
             session.getBasicRemote().sendText(response);
             
@@ -380,6 +814,13 @@ public class WhiteboardEndpoint {
     private void handleJoinRoom(String message, Session session) {
         String roomCode = extractField(message, "roomCode");
         String username = extractField(message, "username");
+
+        if (username == null || username.isEmpty()) {
+            String mappedUsername = sessionToUsername.get(session.getId());
+            if (mappedUsername != null && !mappedUsername.isEmpty()) {
+                username = mappedUsername;
+            }
+        }
         
         if (roomCode == null || roomCode.isEmpty()) {
             sendError(session, "Room code is required");
@@ -451,12 +892,34 @@ public class WhiteboardEndpoint {
         
         // Approve the user
         room.approveSession(targetSession);
+        Long boardId = room.getBoardId();
+        if (boardId != null) {
+            sessionToBoard.put(targetSession.getId(), boardId);
+        }
+        String boardTitle = room.getBoardTitle();
+        String boardCanvas = room.getBoardCanvas();
+        if ((boardCanvas == null || boardCanvas.isEmpty()) && boardId != null) {
+            Optional<Board> latestBoard = boardDAO.getBoardById(boardId);
+            if (latestBoard.isPresent()) {
+                if (boardTitle == null || boardTitle.isEmpty()) {
+                    boardTitle = latestBoard.get().getTitle();
+                }
+                boardCanvas = latestBoard.get().getCanvasData();
+                if (boardCanvas != null) {
+                    room.setBoardCanvas(boardCanvas);
+                }
+            }
+        }
         
         try {
             // Notify the approved user
             String approvedResponse = String.format(
-                "{\"type\":\"approved\",\"roomCode\":\"%s\",\"userCount\":%d}",
-                roomCode, room.getApprovedCount()
+                "{\"type\":\"approved\",\"roomCode\":\"%s\",\"userCount\":%d,\"boardId\":%s,\"boardTitle\":%s,\"canvasData\":%s}",
+                roomCode,
+                room.getApprovedCount(),
+                boardId != null ? boardId.toString() : "null",
+                toJsonString(boardTitle),
+                toJsonString(boardCanvas)
             );
             targetSession.getBasicRemote().sendText(approvedResponse);
             
@@ -574,6 +1037,19 @@ public class WhiteboardEndpoint {
         DrawingEvent event = DrawingEvent.fromJson(message);
         event.setSessionId(senderSession.getId());
         event.setRoomCode(roomCode); // Set room code for database filtering
+        Long boardId = sessionToBoard.get(senderSession.getId());
+        if (boardId != null) {
+            event.setBoardId(boardId);
+        }
+        if (event.getUsername() == null || event.getUsername().isEmpty()) {
+            String username = sessionToUsername.get(senderSession.getId());
+            if (username != null) {
+                event.setUsername(username);
+            }
+        }
+        if (event.getLineStyle() == null || event.getLineStyle().isEmpty()) {
+            event.setLineStyle(extractField(message, "lineStyle"));
+        }
         
         // Save to database if enabled
         if (PERSIST_TO_DATABASE) {
@@ -588,6 +1064,10 @@ public class WhiteboardEndpoint {
         String broadcastMessage = event.toJson();
         if (room != null) {
             broadcastToRoom(room, broadcastMessage, null);
+        } else if (boardId != null) {
+            broadcastToBoard(boardId, broadcastMessage, senderSession);
+        } else {
+            broadcast(broadcastMessage);
         }
     }
     
@@ -614,6 +1094,10 @@ public class WhiteboardEndpoint {
                     event.setSessionId(senderSession.getId());
                     event.setRoomCode(roomCode);
                     event.setUsername(extractField(message, "username"));
+                    Long boardId = sessionToBoard.get(senderSession.getId());
+                    if (boardId != null) {
+                        event.setBoardId(boardId);
+                    }
                     event.setTool(tool);
                     event.setX1(extractInt(message, "x1"));
                     event.setY1(extractInt(message, "y1"));
@@ -621,6 +1105,13 @@ public class WhiteboardEndpoint {
                     event.setY2(extractInt(message, "y2"));
                     event.setColor(extractField(message, "color"));
                     event.setStrokeWidth(extractInt(message, "strokeWidth"));
+                    event.setLineStyle(extractField(message, "lineStyle"));
+                    if (event.getUsername() == null || event.getUsername().isEmpty()) {
+                        String username = sessionToUsername.get(senderSession.getId());
+                        if (username != null) {
+                            event.setUsername(username);
+                        }
+                    }
                     
                     drawingEventDAO.saveEvent(event);
                 }
@@ -632,6 +1123,13 @@ public class WhiteboardEndpoint {
         // Broadcast to room members only
         if (room != null) {
             broadcastToRoom(room, message, null);
+        } else {
+            Long boardId = sessionToBoard.get(senderSession.getId());
+            if (boardId != null) {
+                broadcastToBoard(boardId, message, senderSession);
+            } else {
+                broadcast(message);
+            }
         }
     }
     
@@ -658,21 +1156,51 @@ public class WhiteboardEndpoint {
     /**
      * Handle clear canvas request
      */
-    private void handleClearCanvas(Session senderSession) {
-        String roomCode = sessionToRoom.get(senderSession.getId());
+    private void handleClearCanvas(String message, Session senderSession) {
+        String roomCodeFromMessage = extractField(message, "roomCode");
+        if (roomCodeFromMessage != null && "null".equalsIgnoreCase(roomCodeFromMessage.trim())) {
+            roomCodeFromMessage = null;
+        }
+        String mappedRoomCode = sessionToRoom.get(senderSession.getId());
+        String roomCode = roomCodeFromMessage != null ? roomCodeFromMessage : mappedRoomCode;
+        Long boardId = extractLong(message, "boardId");
+        if (boardId == null) {
+            boardId = sessionToBoard.get(senderSession.getId());
+        }
+
+        System.out.println("Canvas clear requested by: " + senderSession.getId() +
+                           (boardId != null ? (" | board=" + boardId) : "") +
+                           (roomCode != null ? (" | room=" + roomCode) : ""));
         
-        System.out.println("Canvas clear requested by: " + senderSession.getId());
-        
-        // Clear database if enabled
         if (PERSIST_TO_DATABASE) {
-            drawingEventDAO.clearAllEvents();
+            if (boardId != null) {
+                drawingEventDAO.clearEventsForBoard(boardId);
+            } else if (roomCode != null && !roomCode.isEmpty()) {
+                drawingEventDAO.clearEventsForRoom(roomCode);
+            } else {
+                drawingEventDAO.clearAllEvents();
+            }
         }
         
-        // Broadcast clear command to room only
-        String clearMessage = "{\"type\":\"clear\"}";
+        StringBuilder clearBuilder = new StringBuilder("{\"type\":\"clear\",\"boardId\":");
+        clearBuilder.append(boardId != null ? boardId.toString() : "null");
+        if (roomCode != null) {
+            clearBuilder.append(",\"roomCode\":\"").append(roomCode).append("\"");
+        }
+        clearBuilder.append('}');
+        String clearMessage = clearBuilder.toString();
+
         Room room = roomCode != null ? rooms.get(roomCode) : null;
         if (room != null) {
             broadcastToRoom(room, clearMessage, null);
+        } else if (boardId != null) {
+            broadcastToBoard(boardId, clearMessage, senderSession);
+        } else {
+            try {
+                senderSession.getBasicRemote().sendText(clearMessage);
+            } catch (IOException e) {
+                System.err.println("Error sending clear confirmation: " + e.getMessage());
+            }
         }
     }
     
@@ -697,7 +1225,11 @@ public class WhiteboardEndpoint {
     private void sendCanvasHistory(Session session, String roomCode) {
         try {
             List<DrawingEvent> events;
-            if (roomCode != null) {
+            Long boardId = sessionToBoard.get(session.getId());
+
+            if (boardId != null) {
+                events = drawingEventDAO.getEventsByBoard(boardId);
+            } else if (roomCode != null) {
                 // Send only events for this room
                 events = drawingEventDAO.getEventsByRoom(roomCode);
             } else {
@@ -717,12 +1249,16 @@ public class WhiteboardEndpoint {
                 // Send history end marker
                 session.getBasicRemote().sendText("{\"type\":\"historyEnd\"}");
                 
-                System.out.println("Sent " + events.size() + " historical events for room " + roomCode + " to " + session.getId());
+                System.out.println("Sent " + events.size() + " historical events" +
+                                   (boardId != null ? (" for board " + boardId) : (roomCode != null ? (" for room " + roomCode) : "")) +
+                                   " to " + session.getId());
             } else {
                 // Send empty history markers
                 session.getBasicRemote().sendText("{\"type\":\"historyStart\"}");
                 session.getBasicRemote().sendText("{\"type\":\"historyEnd\"}");
-                System.out.println("Sent empty history for room " + roomCode + " to " + session.getId());
+                System.out.println("Sent empty history" +
+                                   (boardId != null ? (" for board " + boardId) : (roomCode != null ? (" for room " + roomCode) : "")) +
+                                   " to " + session.getId());
             }
         } catch (IOException e) {
             System.err.println("Error sending canvas history: " + e.getMessage());
@@ -765,6 +1301,8 @@ public class WhiteboardEndpoint {
                 }
             }
         }
+
+        room.clearBoardMetadata();
     }
     
     /**
@@ -777,6 +1315,28 @@ public class WhiteboardEndpoint {
                     session.getBasicRemote().sendText(message);
                 } catch (IOException e) {
                     System.err.println("Error broadcasting to room member: " + e.getMessage());
+                }
+            }
+        }
+    }
+
+    /**
+     * Broadcast a message to all clients currently working on the same board
+     */
+    private void broadcastToBoard(Long boardId, String message, Session excludeSession) {
+        for (Session session : sessions) {
+            if (!session.isOpen()) {
+                continue;
+            }
+            if (excludeSession != null && session.equals(excludeSession)) {
+                continue;
+            }
+            Long mappedBoard = sessionToBoard.get(session.getId());
+            if (mappedBoard != null && mappedBoard.equals(boardId)) {
+                try {
+                    session.getBasicRemote().sendText(message);
+                } catch (IOException e) {
+                    System.err.println("Error broadcasting to board session: " + e.getMessage());
                 }
             }
         }
@@ -829,6 +1389,15 @@ public class WhiteboardEndpoint {
             System.err.println("Error sending auth error message: " + e.getMessage());
         }
     }
+
+    private void sendSessionRestoreFailed(Session session, String errorMessage) {
+        try {
+            String error = String.format("{\"type\":\"sessionRestoreFailed\",\"message\":\"%s\"}", errorMessage);
+            session.getBasicRemote().sendText(error);
+        } catch (IOException e) {
+            System.err.println("Error sending session restore error message: " + e.getMessage());
+        }
+    }
     
     /**
      * Extract message type from JSON
@@ -839,6 +1408,7 @@ public class WhiteboardEndpoint {
     
     /**
      * Extract a field value from JSON string
+     * Properly handles escaped characters in string values (e.g., base64 data URLs)
      */
     private String extractField(String json, String fieldName) {
         try {
@@ -857,11 +1427,37 @@ public class WhiteboardEndpoint {
             // Check if value is quoted
             if (start < json.length() && json.charAt(start) == '"') {
                 start++; // Skip opening quote
-                int end = json.indexOf("\"", start);
-                if (end == -1) return null;
-                return json.substring(start, end);
+                // Find closing quote, accounting for escaped quotes
+                StringBuilder value = new StringBuilder();
+                boolean escaped = false;
+                int i = start;
+                while (i < json.length()) {
+                    char c = json.charAt(i);
+                    if (escaped) {
+                        // Handle escape sequences
+                        switch (c) {
+                            case '"': value.append('"'); break;
+                            case '\\': value.append('\\'); break;
+                            case '/': value.append('/'); break;
+                            case 'n': value.append('\n'); break;
+                            case 'r': value.append('\r'); break;
+                            case 't': value.append('\t'); break;
+                            default: value.append(c); break;
+                        }
+                        escaped = false;
+                    } else if (c == '\\') {
+                        escaped = true;
+                    } else if (c == '"') {
+                        // End of string
+                        break;
+                    } else {
+                        value.append(c);
+                    }
+                    i++;
+                }
+                return value.toString();
             } else {
-                // Unquoted value (shouldn't happen in our case, but handle it)
+                // Unquoted value (numbers, booleans, null)
                 int end = start;
                 while (end < json.length() && json.charAt(end) != ',' && json.charAt(end) != '}' && !Character.isWhitespace(json.charAt(end))) {
                     end++;
@@ -885,6 +1481,56 @@ public class WhiteboardEndpoint {
             System.err.println("Error parsing integer field '" + fieldName + "' from JSON: " + e.getMessage());
             return 0;
         }
+    }
+
+    private Long extractLong(String json, String fieldName) {
+        try {
+            String value = extractField(json, fieldName);
+            if (value == null || value.isEmpty() || "null".equalsIgnoreCase(value)) {
+                return null;
+            }
+            return Long.parseLong(value);
+        } catch (NumberFormatException e) {
+            System.err.println("Error parsing long field '" + fieldName + "' from JSON: " + e.getMessage());
+            return null;
+        }
+    }
+
+    private String toJsonString(String value) {
+        if (value == null) {
+            return "null";
+        }
+        StringBuilder escaped = new StringBuilder(value.length() + 16);
+        escaped.append('"');
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            switch (c) {
+                case '"':
+                    escaped.append("\\\"");
+                    break;
+                case '\\':
+                    escaped.append("\\\\");
+                    break;
+                case '\n':
+                    escaped.append("\\n");
+                    break;
+                case '\r':
+                    escaped.append("\\r");
+                    break;
+                case '\t':
+                    escaped.append("\\t");
+                    break;
+                default:
+                    if (c < 0x20) {
+                        escaped.append(String.format("\\u%04x", (int) c));
+                    } else {
+                        escaped.append(c);
+                    }
+                    break;
+            }
+        }
+        escaped.append('"');
+        return escaped.toString();
     }
     
     /**

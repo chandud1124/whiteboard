@@ -12,28 +12,44 @@ import java.util.List;
  * Handles all database operations for drawing events using JDBC.
  */
 public class DrawingEventDAO {
+    private static final Object COLUMN_LOCK = new Object();
+    private static volatile boolean boardColumnChecked = false;
     
-    private static final String INSERT_EVENT = 
-        "INSERT INTO drawing_events (session_id, room_code, username, x1, y1, x2, y2, color, tool, stroke_width) " +
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-    
-    private static final String SELECT_ALL_EVENTS = 
-        "SELECT id, session_id, room_code, username, x1, y1, x2, y2, color, tool, stroke_width, timestamp " +
+    private static final String INSERT_EVENT =
+        "INSERT INTO drawing_events (board_id, session_id, room_code, username, x1, y1, x2, y2, color, tool, stroke_width, line_style) " +
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+
+    private static final String SELECT_ALL_EVENTS =
+        "SELECT id, board_id, session_id, room_code, username, x1, y1, x2, y2, color, tool, stroke_width, line_style, timestamp " +
         "FROM drawing_events ORDER BY timestamp ASC";
-    
-    private static final String SELECT_RECENT_EVENTS = 
-        "SELECT id, session_id, room_code, username, x1, y1, x2, y2, color, tool, stroke_width, timestamp " +
+
+    private static final String SELECT_RECENT_EVENTS =
+        "SELECT id, board_id, session_id, room_code, username, x1, y1, x2, y2, color, tool, stroke_width, line_style, timestamp " +
         "FROM drawing_events ORDER BY timestamp DESC LIMIT ?";
-    
-    private static final String SELECT_EVENTS_BY_ROOM = 
-        "SELECT id, session_id, room_code, username, x1, y1, x2, y2, color, tool, stroke_width, timestamp " +
+
+    private static final String SELECT_EVENTS_BY_ROOM =
+        "SELECT id, board_id, session_id, room_code, username, x1, y1, x2, y2, color, tool, stroke_width, line_style, timestamp " +
         "FROM drawing_events WHERE room_code = ? ORDER BY timestamp ASC";
-    
-    private static final String DELETE_ALL_EVENTS = 
+
+    private static final String SELECT_EVENTS_BY_BOARD =
+        "SELECT id, board_id, session_id, room_code, username, x1, y1, x2, y2, color, tool, stroke_width, line_style, timestamp " +
+        "FROM drawing_events WHERE board_id = ? ORDER BY timestamp ASC";
+
+    private static final String DELETE_ALL_EVENTS =
         "DELETE FROM drawing_events";
-    
-    private static final String DELETE_OLD_EVENTS = 
+
+    private static final String DELETE_EVENTS_BY_BOARD =
+        "DELETE FROM drawing_events WHERE board_id = ?";
+
+    private static final String DELETE_EVENTS_BY_ROOM =
+        "DELETE FROM drawing_events WHERE room_code = ?";
+
+    private static final String DELETE_OLD_EVENTS =
         "DELETE FROM drawing_events WHERE timestamp < DATE_SUB(NOW(), INTERVAL ? HOUR)";
+
+    static {
+        ensureBoardIdColumn();
+    }
     
     /**
      * Save a drawing event to the database
@@ -46,19 +62,26 @@ public class DrawingEventDAO {
         ResultSet rs = null;
         
         try {
+            ensureBoardIdColumn();
             conn = DatabaseConnection.getConnection();
             stmt = conn.prepareStatement(INSERT_EVENT, Statement.RETURN_GENERATED_KEYS);
             
-            stmt.setString(1, event.getSessionId());
-            stmt.setString(2, event.getRoomCode());
-            stmt.setString(3, event.getUsername());
-            stmt.setInt(4, event.getX1());
-            stmt.setInt(5, event.getY1());
-            stmt.setInt(6, event.getX2());
-            stmt.setInt(7, event.getY2());
-            stmt.setString(8, event.getColor());
-            stmt.setString(9, event.getTool());
-            stmt.setInt(10, event.getStrokeWidth());
+            if (event.getBoardId() != null) {
+                stmt.setLong(1, event.getBoardId());
+            } else {
+                stmt.setNull(1, Types.BIGINT);
+            }
+            stmt.setString(2, event.getSessionId());
+            stmt.setString(3, event.getRoomCode());
+            stmt.setString(4, event.getUsername());
+            stmt.setInt(5, event.getX1());
+            stmt.setInt(6, event.getY1());
+            stmt.setInt(7, event.getX2());
+            stmt.setInt(8, event.getY2());
+            stmt.setString(9, event.getColor());
+            stmt.setString(10, event.getTool());
+            stmt.setInt(11, event.getStrokeWidth());
+            stmt.setString(12, event.getLineStyle());
             
             int affectedRows = stmt.executeUpdate();
             
@@ -83,23 +106,36 @@ public class DrawingEventDAO {
      * @return Number of events successfully saved
      */
     public int saveEventsBatch(List<DrawingEvent> events) {
+        if (events == null || events.isEmpty()) {
+            return 0;
+        }
+
         Connection conn = null;
         PreparedStatement stmt = null;
         
         try {
+            ensureBoardIdColumn();
             conn = DatabaseConnection.getConnection();
             conn.setAutoCommit(false);
             stmt = conn.prepareStatement(INSERT_EVENT);
             
             for (DrawingEvent event : events) {
-                stmt.setString(1, event.getSessionId());
-                stmt.setInt(2, event.getX1());
-                stmt.setInt(3, event.getY1());
-                stmt.setInt(4, event.getX2());
-                stmt.setInt(5, event.getY2());
-                stmt.setString(6, event.getColor());
-                stmt.setString(7, event.getTool());
-                stmt.setInt(8, event.getStrokeWidth());
+                if (event.getBoardId() != null) {
+                    stmt.setLong(1, event.getBoardId());
+                } else {
+                    stmt.setNull(1, Types.BIGINT);
+                }
+                stmt.setString(2, event.getSessionId());
+                stmt.setString(3, event.getRoomCode());
+                stmt.setString(4, event.getUsername());
+                stmt.setInt(5, event.getX1());
+                stmt.setInt(6, event.getY1());
+                stmt.setInt(7, event.getX2());
+                stmt.setInt(8, event.getY2());
+                stmt.setString(9, event.getColor());
+                stmt.setString(10, event.getTool());
+                stmt.setInt(11, event.getStrokeWidth());
+                stmt.setString(12, event.getLineStyle());
                 stmt.addBatch();
             }
             
@@ -144,6 +180,7 @@ public class DrawingEventDAO {
         ResultSet rs = null;
         
         try {
+            ensureBoardIdColumn();
             conn = DatabaseConnection.getConnection();
             stmt = conn.prepareStatement(SELECT_ALL_EVENTS);
             rs = stmt.executeQuery();
@@ -172,6 +209,7 @@ public class DrawingEventDAO {
         ResultSet rs = null;
         
         try {
+            ensureBoardIdColumn();
             conn = DatabaseConnection.getConnection();
             stmt = conn.prepareStatement(SELECT_EVENTS_BY_ROOM);
             stmt.setString(1, roomCode);
@@ -188,6 +226,34 @@ public class DrawingEventDAO {
         
         return events;
     }
+
+    /**
+     * Get drawing events for a specific board
+     */
+    public List<DrawingEvent> getEventsByBoard(long boardId) {
+        List<DrawingEvent> events = new ArrayList<>();
+        Connection conn = null;
+        PreparedStatement stmt = null;
+        ResultSet rs = null;
+
+        try {
+            ensureBoardIdColumn();
+            conn = DatabaseConnection.getConnection();
+            stmt = conn.prepareStatement(SELECT_EVENTS_BY_BOARD);
+            stmt.setLong(1, boardId);
+            rs = stmt.executeQuery();
+
+            while (rs.next()) {
+                events.add(mapResultSetToEvent(rs));
+            }
+        } catch (SQLException e) {
+            System.err.println("Error fetching events for board " + boardId + ": " + e.getMessage());
+        } finally {
+            closeResources(rs, stmt, conn);
+        }
+
+        return events;
+    }
     
     /**
      * Get recent drawing events
@@ -201,6 +267,7 @@ public class DrawingEventDAO {
         ResultSet rs = null;
         
         try {
+            ensureBoardIdColumn();
             conn = DatabaseConnection.getConnection();
             stmt = conn.prepareStatement(SELECT_RECENT_EVENTS);
             stmt.setInt(1, limit);
@@ -227,12 +294,51 @@ public class DrawingEventDAO {
         PreparedStatement stmt = null;
         
         try {
+            ensureBoardIdColumn();
             conn = DatabaseConnection.getConnection();
             stmt = conn.prepareStatement(DELETE_ALL_EVENTS);
             stmt.executeUpdate();
             return true;
         } catch (SQLException e) {
             System.err.println("Error clearing events: " + e.getMessage());
+            return false;
+        } finally {
+            closeResources(null, stmt, conn);
+        }
+    }
+
+    public boolean clearEventsForBoard(long boardId) {
+        Connection conn = null;
+        PreparedStatement stmt = null;
+
+        try {
+            ensureBoardIdColumn();
+            conn = DatabaseConnection.getConnection();
+            stmt = conn.prepareStatement(DELETE_EVENTS_BY_BOARD);
+            stmt.setLong(1, boardId);
+            stmt.executeUpdate();
+            return true;
+        } catch (SQLException e) {
+            System.err.println("Error clearing events for board " + boardId + ": " + e.getMessage());
+            return false;
+        } finally {
+            closeResources(null, stmt, conn);
+        }
+    }
+
+    public boolean clearEventsForRoom(String roomCode) {
+        Connection conn = null;
+        PreparedStatement stmt = null;
+
+        try {
+            ensureBoardIdColumn();
+            conn = DatabaseConnection.getConnection();
+            stmt = conn.prepareStatement(DELETE_EVENTS_BY_ROOM);
+            stmt.setString(1, roomCode);
+            stmt.executeUpdate();
+            return true;
+        } catch (SQLException e) {
+            System.err.println("Error clearing events for room " + roomCode + ": " + e.getMessage());
             return false;
         } finally {
             closeResources(null, stmt, conn);
@@ -249,6 +355,7 @@ public class DrawingEventDAO {
         PreparedStatement stmt = null;
         
         try {
+            ensureBoardIdColumn();
             conn = DatabaseConnection.getConnection();
             stmt = conn.prepareStatement(DELETE_OLD_EVENTS);
             stmt.setInt(1, hoursOld);
@@ -267,6 +374,10 @@ public class DrawingEventDAO {
     private DrawingEvent mapResultSetToEvent(ResultSet rs) throws SQLException {
         DrawingEvent event = new DrawingEvent();
         event.setId(rs.getLong("id"));
+        long boardId = rs.getLong("board_id");
+        if (!rs.wasNull()) {
+            event.setBoardId(boardId);
+        }
         event.setSessionId(rs.getString("session_id"));
         event.setRoomCode(rs.getString("room_code"));
         event.setUsername(rs.getString("username"));
@@ -277,6 +388,7 @@ public class DrawingEventDAO {
         event.setColor(rs.getString("color"));
         event.setTool(rs.getString("tool"));
         event.setStrokeWidth(rs.getInt("stroke_width"));
+        event.setLineStyle(rs.getString("line_style"));
         event.setTimestamp(rs.getTimestamp("timestamp"));
         return event;
     }
@@ -300,5 +412,66 @@ public class DrawingEventDAO {
             }
         }
         DatabaseConnection.closeConnection(conn);
+    }
+
+    private static void ensureBoardIdColumn() {
+        if (boardColumnChecked) {
+            return;
+        }
+
+        synchronized (COLUMN_LOCK) {
+            if (boardColumnChecked) {
+                return;
+            }
+
+            try (Connection conn = DatabaseConnection.getConnection()) {
+                if (conn == null) {
+                    return;
+                }
+
+                if (hasColumn(conn, "drawing_events", "board_id")) {
+                    boardColumnChecked = true;
+                    return;
+                }
+
+                try (Statement stmt = conn.createStatement()) {
+                    stmt.executeUpdate("ALTER TABLE drawing_events ADD COLUMN board_id BIGINT NULL AFTER id");
+                    try {
+                        stmt.executeUpdate("CREATE INDEX idx_board_id ON drawing_events (board_id)");
+                    } catch (SQLException indexEx) {
+                        // Ignore if index already exists
+                        if (!indexEx.getMessage().toLowerCase().contains("duplicate")) {
+                            System.err.println("Error creating idx_board_id index: " + indexEx.getMessage());
+                        }
+                    }
+                }
+
+                boardColumnChecked = true;
+                System.out.println("Added missing board_id column to drawing_events");
+            } catch (SQLException e) {
+                System.err.println("Error ensuring drawing_events.board_id column: " + e.getMessage());
+            }
+        }
+    }
+
+    private static boolean hasColumn(Connection conn, String tableName, String columnName) throws SQLException {
+        DatabaseMetaData metaData = conn.getMetaData();
+        String catalog = conn.getCatalog();
+
+        try (ResultSet rs = metaData.getColumns(catalog, null, tableName, columnName)) {
+            if (rs.next()) {
+                return true;
+            }
+        }
+
+        try (ResultSet rs = metaData.getColumns(catalog, null, tableName.toUpperCase(), columnName.toUpperCase())) {
+            if (rs.next()) {
+                return true;
+            }
+        }
+
+        try (ResultSet rs = metaData.getColumns(catalog, null, tableName.toLowerCase(), columnName.toLowerCase())) {
+            return rs.next();
+        }
     }
 }

@@ -19,6 +19,9 @@ public class Room {
     private final Set<Session> pendingApproval;
     private final ConcurrentHashMap<String, String> pendingUsernames; // sessionId -> username
     private final long createdAt;
+    private volatile Long boardId;
+    private volatile String boardTitle;
+    private volatile String boardCanvas;
     
     public Room(Session ownerSession) {
         this.roomId = UUID.randomUUID().toString();
@@ -123,5 +126,37 @@ public class Room {
     
     public long getCreatedAt() {
         return createdAt;
+    }
+
+    public Long getBoardId() {
+        return boardId;
+    }
+
+    public String getBoardTitle() {
+        return boardTitle;
+    }
+
+    public String getBoardCanvas() {
+        return boardCanvas;
+    }
+
+    public void setBoardMetadata(Long boardId, String boardTitle, String boardCanvas) {
+        this.boardId = boardId;
+        this.boardTitle = boardTitle;
+        this.boardCanvas = boardCanvas;
+    }
+
+    public void setBoardCanvas(String boardCanvas) {
+        this.boardCanvas = boardCanvas;
+    }
+
+    public void setBoardTitle(String boardTitle) {
+        this.boardTitle = boardTitle;
+    }
+
+    public void clearBoardMetadata() {
+        this.boardId = null;
+        this.boardTitle = null;
+        this.boardCanvas = null;
     }
 }

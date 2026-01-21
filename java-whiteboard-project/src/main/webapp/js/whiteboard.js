@@ -14,7 +14,9 @@
         WS_URL: 'ws://localhost:8082/whiteboard/whiteboard',
         RECONNECT_DELAY: 3000,
         MAX_RECONNECT_ATTEMPTS: 5,
-        PING_INTERVAL: 30000
+        PING_INTERVAL: 30000,
+        AUTO_SAVE_DEBOUNCE: 1500,
+        AUTO_SAVE_INTERVAL: 20000
     };
 
     // ========================================
@@ -85,6 +87,9 @@
         
         // History
         isReceivingHistory: false,
+        historyEventCount: 0,
+        lastReceivedCanvasSnapshot: null,
+        shouldRestoreSnapshotAfterHistory: false,
         
         // Collaboration - Live cursors
         userCursors: {},
@@ -97,7 +102,30 @@
         cursorColors: [
             '#3B82F6', '#EF4444', '#10B981', '#F59E0B', '#8B5CF6',
             '#EC4899', '#06B6D4', '#84CC16', '#F97316', '#6366F1'
-        ]
+        ],
+        
+        // Boards Management
+        boards: [],
+        currentBoardId: null,
+        currentBoardTitle: '',
+        roomBoardTitle: '',
+        editingBoardId: null,
+        deletingBoardId: null,
+        boardModalMode: 'default', // default | edit | room
+        pendingRoomCreation: false,
+        pendingRoomBoardId: null,
+        pendingRoomBoardTitle: '',
+        pendingRoomOptions: null,
+        awaitingRoomSaveForRoom: false,
+        queuedRoomBoardId: null,
+        queuedRoomOptions: null,
+        lastRoomShareSyncAt: 0,
+
+        // Auto-save
+        autoSaveTimer: null,
+        autoSaveIntervalId: null,
+        hasUnsavedChanges: false,
+        lastAutoSaveAt: 0
     };
 
     // ========================================
@@ -108,8 +136,10 @@
         canvasContainer: document.getElementById('canvasContainer'),
         canvasOverlay: document.getElementById('canvasOverlay'),
         connectionStatus: document.getElementById('connectionStatus'),
+        saveStatus: document.getElementById('saveStatus'),
         userCount: document.getElementById('userCount'),
         sessionId: document.getElementById('sessionId'),
+        homeBtn: document.getElementById('homeBtn'),
         
         // Drawing tools
         penTool: document.getElementById('penTool'),
@@ -154,6 +184,7 @@
         // Room elements
         roomBadge: document.getElementById('roomBadge'),
         roomCodeDisplay: document.getElementById('roomCodeDisplay'),
+        roomBoardTitle: document.getElementById('roomBoardTitle'),
         copyRoomCode: document.getElementById('copyRoomCode'),
         pendingRequests: document.getElementById('pendingRequests'),
         createRoomBtn: document.getElementById('createRoomBtn'),
@@ -222,8 +253,110 @@
         chatToggle: document.getElementById('chatToggle'),
         closeChatBtn: document.getElementById('closeChatBtn'),
         userCursorsContainer: document.getElementById('userCursorsContainer'),
-        switchToLogin: document.getElementById('switchToLogin')
+        switchToLogin: document.getElementById('switchToLogin'),
+        
+        // Boards Dashboard elements
+        boardsDashboard: document.getElementById('boardsDashboard'),
+        boardsGrid: document.getElementById('boardsGrid'),
+        emptyState: document.getElementById('emptyState'),
+        createNewBoardBtn: document.getElementById('createNewBoardBtn'),
+        createFirstBoardBtn: document.getElementById('createFirstBoardBtn'),
+        logoHome: document.getElementById('logoHome'),
+        dashboardLogoutBtn: document.getElementById('dashboardLogoutBtn'),
+        dashboardCreateRoomBtn: document.getElementById('dashboardCreateRoomBtn'),
+        dashboardJoinRoomBtn: document.getElementById('dashboardJoinRoomBtn'),
+        
+        // Board Modal elements
+        boardModal: document.getElementById('boardModal'),
+        boardModalTitle: document.getElementById('boardModalTitle'),
+        boardName: document.getElementById('boardName'),
+        boardDescription: document.getElementById('boardDescription'),
+        closeBoardModal: document.getElementById('closeBoardModal'),
+        cancelBoardModal: document.getElementById('cancelBoardModal'),
+        saveBoardBtn: document.getElementById('saveBoardBtn'),
+        
+        // Delete Modal elements
+        deleteBoardModal: document.getElementById('deleteBoardModal'),
+        deleteBoardName: document.getElementById('deleteBoardName'),
+        closeDeleteModal: document.getElementById('closeDeleteModal'),
+        cancelDeleteBtn: document.getElementById('cancelDeleteBtn'),
+        confirmDeleteBtn: document.getElementById('confirmDeleteBtn')
     };
+
+    function initCustomTooltips(root = document) {
+        let tooltip = document.getElementById('appTooltip');
+        if (!tooltip) {
+            tooltip = document.createElement('div');
+            tooltip.id = 'appTooltip';
+            tooltip.className = 'app-tooltip';
+            document.body.appendChild(tooltip);
+        }
+
+        let activeTarget = null;
+
+        const hideTooltip = () => {
+            tooltip.classList.remove('visible');
+            activeTarget = null;
+        };
+
+        const positionTooltip = (event, target) => {
+            if (!activeTarget) return;
+            const rect = target.getBoundingClientRect();
+            let x = rect.left + rect.width / 2;
+            let y = rect.top;
+
+            if (event) {
+                if (typeof event.clientX === 'number' && typeof event.clientY === 'number') {
+                    x = event.clientX;
+                    y = event.clientY;
+                } else if (event.touches && event.touches[0]) {
+                    x = event.touches[0].clientX;
+                    y = event.touches[0].clientY;
+                }
+            }
+
+            tooltip.style.left = `${Math.round(x)}px`;
+            tooltip.style.top = `${Math.round(y)}px`;
+        };
+
+        const showTooltip = (event) => {
+            const target = event.currentTarget;
+            const label = target.dataset.tooltip;
+            if (!label) return;
+            tooltip.textContent = label;
+            tooltip.classList.add('visible');
+            activeTarget = target;
+            positionTooltip(event.type === 'focus' ? null : event, target);
+        };
+
+        const targets = Array.from(root.querySelectorAll('[data-tooltip], [title]'))
+            .filter((el) => {
+                const label = el.getAttribute('data-tooltip') || el.getAttribute('title');
+                return !!label && el.dataset.tooltipBound !== 'true';
+            });
+
+        targets.forEach((target) => {
+            const label = target.getAttribute('data-tooltip') || target.getAttribute('title');
+            target.dataset.tooltip = label;
+            target.dataset.tooltipBound = 'true';
+            target.removeAttribute('title');
+            target.addEventListener('mouseenter', showTooltip);
+            target.addEventListener('mousemove', (event) => positionTooltip(event, target));
+            target.addEventListener('mouseleave', hideTooltip);
+            target.addEventListener('focus', showTooltip);
+            target.addEventListener('blur', hideTooltip);
+            target.addEventListener('touchstart', (event) => {
+                showTooltip(event);
+                positionTooltip(event, target);
+                setTimeout(hideTooltip, 1200);
+            }, { passive: true });
+        });
+
+        if (document.body && document.body.dataset.tooltipScrollBound !== 'true') {
+            document.addEventListener('scroll', hideTooltip, true);
+            document.body.dataset.tooltipScrollBound = 'true';
+        }
+    }
 
     // ========================================
     // Initialization
@@ -253,12 +386,561 @@
         initEventListeners();
         initAuthListeners();
         initRoomListeners();
+        initWelcomeModal();
+        initBoardsDashboard();
+        initCustomTooltips();
         connectWebSocket();
         checkUrlForRoomCode();
         
         // Keyboard shortcuts
         document.addEventListener('keydown', handleKeyboard);
+        
+        // Show dashboard if logged in
+        if (state.isLoggedIn) {
+            // Show dashboard immediately
+            elements.boardsDashboard.classList.remove('hidden');
+            startAutoSaveInterval();
+            // Request boards list from server after connection
+            setTimeout(() => {
+                if (state.socket && state.socket.readyState === WebSocket.OPEN) {
+                    requestBoardsList();
+                }
+            }, 500);
+        }
     }
+
+    // ========================================
+    // Welcome Modal Functionality
+    // ========================================
+    function initWelcomeModal() {
+        const welcomeModal = document.getElementById('welcomeModal');
+        const continueAsGuestBtn = document.getElementById('continueAsGuest');
+        const welcomeLoginBtn = document.getElementById('welcomeLogin');
+        const guestBanner = document.getElementById('guestBanner');
+        const closeGuestBanner = document.getElementById('closeGuestBanner');
+        const guestLoginPrompt = document.getElementById('guestLoginPrompt');
+
+        console.log('Initializing welcome modal...', {
+            modal: !!welcomeModal,
+            guestBtn: !!continueAsGuestBtn,
+            loginBtn: !!welcomeLoginBtn,
+            isLoggedIn: state.isLoggedIn,
+            hasGuestSession: !!sessionStorage.getItem('whiteboard_guest')
+        });
+
+        // If user is logged in, hide both welcome modal and guest banner
+        if (state.isLoggedIn) {
+            if (welcomeModal) {
+                welcomeModal.classList.add('hidden');
+            }
+            if (guestBanner) {
+                guestBanner.classList.add('hidden');
+            }
+            // Clear any guest session
+            sessionStorage.removeItem('whiteboard_guest');
+            console.log('User is logged in - hiding welcome UI');
+            return;
+        }
+
+        // Show welcome modal if not logged in and no guest session
+        if (!sessionStorage.getItem('whiteboard_guest')) {
+            if (welcomeModal) {
+                welcomeModal.classList.remove('hidden');
+                console.log('Welcome modal shown');
+            }
+            if (guestBanner) {
+                guestBanner.classList.add('hidden');
+            }
+        } else {
+            // Show guest banner if in guest mode
+            if (welcomeModal) {
+                welcomeModal.classList.add('hidden');
+            }
+            if (guestBanner) {
+                guestBanner.classList.remove('hidden');
+            }
+        }
+
+        // Continue as Guest button
+        if (continueAsGuestBtn) {
+            continueAsGuestBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('Guest button clicked');
+                
+                // Set guest session flag immediately
+                sessionStorage.setItem('whiteboard_guest', 'true');
+                
+                // Hide welcome modal immediately
+                if (welcomeModal) {
+                    welcomeModal.classList.add('hidden');
+                }
+                
+                // Show guest banner
+                if (guestBanner) {
+                    guestBanner.classList.remove('hidden');
+                }
+                
+                // Send guest mode request to server when available
+                const sendGuestMode = () => {
+                    if (state.socket && state.socket.readyState === WebSocket.OPEN) {
+                        state.socket.send(JSON.stringify({
+                            type: 'guestMode'
+                        }));
+                        console.log('Guest mode message sent to server');
+                    } else {
+                        console.log('WebSocket not ready, will send on connect');
+                    }
+                };
+                
+                // Try to send immediately, or wait for connection
+                sendGuestMode();
+            });
+            console.log('Guest button listener attached');
+        } else {
+            console.error('Continue as Guest button not found!');
+        }
+
+        // Welcome Login button
+        if (welcomeLoginBtn) {
+            welcomeLoginBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                console.log('Login button clicked');
+                
+                if (welcomeModal) {
+                    welcomeModal.classList.add('hidden');
+                }
+                
+                // Show login modal
+                if (elements.loginModal) {
+                    elements.loginModal.classList.remove('hidden');
+                    if (elements.loginUsername) {
+                        elements.loginUsername.focus();
+                    }
+                } else {
+                    console.error('Login modal not found');
+                }
+            });
+            console.log('Login button listener attached');
+        } else {
+            console.error('Login button not found!');
+        }
+
+        // Close guest banner
+        if (closeGuestBanner) {
+            closeGuestBanner.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                if (guestBanner) {
+                    guestBanner.classList.add('hidden');
+                }
+            });
+        }
+
+        // Guest login prompt button
+        if (guestLoginPrompt) {
+            guestLoginPrompt.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                if (guestBanner) {
+                    guestBanner.classList.add('hidden');
+                }
+                if (elements.loginModal) {
+                    elements.loginModal.classList.remove('hidden');
+                    if (elements.loginUsername) {
+                        elements.loginUsername.focus();
+                    }
+                }
+            });
+        }
+    }
+
+    // ========================================
+    // Boards Dashboard Functionality
+    // ========================================
+    function initBoardsDashboard() {
+        // Logo click - return to dashboard
+        if (elements.logoHome) {
+            elements.logoHome.addEventListener('click', () => {
+                if (state.isLoggedIn) {
+                    showBoardsDashboard();
+                }
+            });
+        }
+
+        // Create new board buttons
+        if (elements.createNewBoardBtn) {
+            elements.createNewBoardBtn.addEventListener('click', openCreateBoardModal);
+        }
+        if (elements.createFirstBoardBtn) {
+            elements.createFirstBoardBtn.addEventListener('click', openCreateBoardModal);
+        }
+        if (elements.dashboardCreateRoomBtn) {
+            elements.dashboardCreateRoomBtn.addEventListener('click', () => {
+                createRoom({ fromDashboard: true, forceNewBoard: true });
+            });
+        }
+        if (elements.dashboardJoinRoomBtn) {
+            elements.dashboardJoinRoomBtn.addEventListener('click', () => {
+                hideBoardsDashboard();
+                showJoinModal();
+            });
+        }
+
+        // Board modal controls
+        if (elements.closeBoardModal) {
+            elements.closeBoardModal.addEventListener('click', closeBoardModal);
+        }
+        if (elements.cancelBoardModal) {
+            elements.cancelBoardModal.addEventListener('click', closeBoardModal);
+        }
+        if (elements.saveBoardBtn) {
+            elements.saveBoardBtn.addEventListener('click', handleSaveBoard);
+        }
+        
+        // Board name enter key
+        if (elements.boardName) {
+            elements.boardName.addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleSaveBoard();
+                }
+            });
+        }
+
+        // Delete modal controls
+        if (elements.closeDeleteModal) {
+            elements.closeDeleteModal.addEventListener('click', closeDeleteModal);
+        }
+        if (elements.cancelDeleteBtn) {
+            elements.cancelDeleteBtn.addEventListener('click', closeDeleteModal);
+        }
+        if (elements.confirmDeleteBtn) {
+            elements.confirmDeleteBtn.addEventListener('click', confirmDeleteBoard);
+        }
+        
+        // Close modals on backdrop click
+        if (elements.boardModal) {
+            elements.boardModal.addEventListener('click', (e) => {
+                if (e.target === elements.boardModal || e.target.classList.contains('modal-backdrop')) {
+                    closeBoardModal();
+                }
+            });
+        }
+        if (elements.deleteBoardModal) {
+            elements.deleteBoardModal.addEventListener('click', (e) => {
+                if (e.target === elements.deleteBoardModal || e.target.classList.contains('modal-backdrop')) {
+                    closeDeleteModal();
+                }
+            });
+        }
+    }
+
+    function showBoardsDashboard() {
+        elements.boardsDashboard.classList.remove('hidden');
+        document.body.style.overflow = 'auto';
+        requestBoardsList();
+    }
+
+    function hideBoardsDashboard() {
+        elements.boardsDashboard.classList.add('hidden');
+        document.body.style.overflow = 'hidden';
+    }
+
+    function requestBoardsList() {
+        if (state.socket && state.socket.readyState === WebSocket.OPEN) {
+            state.socket.send(JSON.stringify({
+                type: 'getBoards'
+            }));
+            console.log('Requested boards list');
+        }
+    }
+
+    function renderBoards(boards) {
+        state.boards = boards;
+        
+        if (!boards || boards.length === 0) {
+            elements.boardsGrid.innerHTML = '';
+            elements.emptyState.classList.remove('hidden');
+            return;
+        }
+
+        elements.emptyState.classList.add('hidden');
+        
+        elements.boardsGrid.innerHTML = boards.map(board => `
+            <div class="board-card" data-board-id="${board.id}">
+                <div class="board-thumbnail">
+                    ${board.thumbnail || '🎨'}
+                </div>
+                <div class="board-info">
+                    <div class="board-header">
+                        <h3 class="board-title">${escapeHtml(board.title)}</h3>
+                        <div class="board-actions">
+                            <button class="board-menu-btn" onclick="toggleBoardMenu(event, ${board.id})">⋮</button>
+                            <div class="board-menu" id="menu-${board.id}">
+                                <button class="board-menu-item" onclick="openBoard(${board.id})">
+                                    <span>📂</span> Open
+                                </button>
+                                <button class="board-menu-item" onclick="openRenameBoardModal(${board.id}, '${escapeHtml(board.title)}', '${escapeHtml(board.description || '')}')">
+                                    <span>✏️</span> Rename
+                                </button>
+                                <button class="board-menu-item" onclick="duplicateBoard(${board.id})">
+                                    <span>📋</span> Duplicate
+                                </button>
+                                <button class="board-menu-item danger" onclick="openDeleteBoardModal(${board.id}, '${escapeHtml(board.title)}')">
+                                    <span>🗑️</span> Delete
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    ${board.description ? `<p class="board-description">${escapeHtml(board.description)}</p>` : ''}
+                    <div class="board-meta">
+                        <span>Updated ${formatDate(board.updatedAt)}</span>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+
+        initCustomTooltips(elements.boardsGrid);
+
+        // Add click listeners to board cards
+        document.querySelectorAll('.board-card').forEach(card => {
+            card.addEventListener('click', (e) => {
+                // Don't open if clicking menu button or menu items
+                if (!e.target.closest('.board-actions')) {
+                    const boardId = parseInt(card.dataset.boardId);
+                    openBoard(boardId);
+                }
+            });
+        });
+        
+        // Close menus when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.board-actions')) {
+                document.querySelectorAll('.board-menu.show').forEach(menu => {
+                    menu.classList.remove('show');
+                });
+            }
+        });
+    }
+
+    function applyBoardCanvasSnapshot(canvasData) {
+        if (!canvasData) {
+            return false;
+        }
+
+        state.lastReceivedCanvasSnapshot = canvasData;
+        const img = new Image();
+        img.onload = () => {
+            state.ctx.clearRect(0, 0, state.canvas.width, state.canvas.height);
+            state.ctx.drawImage(img, 0, 0);
+            saveHistoryState();
+            state.hasUnsavedChanges = false;
+            updateSaveStatus('saved');
+        };
+        img.onerror = () => {
+            console.error('Failed to load board image');
+            state.ctx.fillStyle = '#FFFFFF';
+            state.ctx.fillRect(0, 0, state.canvas.width, state.canvas.height);
+            saveHistoryState();
+            state.hasUnsavedChanges = false;
+        };
+        img.src = canvasData;
+        return true;
+    }
+
+    function openCreateBoardModal(mode = 'default') {
+        if (mode && typeof mode.preventDefault === 'function') {
+            mode.preventDefault();
+            mode = 'default';
+        }
+        const resolvedMode = typeof mode === 'string' ? mode : 'default';
+        state.editingBoardId = null;
+        state.boardModalMode = resolvedMode;
+        const isRoomFlow = resolvedMode === 'room';
+        elements.boardModalTitle.textContent = isRoomFlow ? 'Create Board for Room' : 'Create New Board';
+        elements.boardName.value = '';
+        elements.boardDescription.value = '';
+        elements.saveBoardBtn.textContent = isRoomFlow ? 'Create Board & Start Room' : 'Create Board';
+        elements.boardModal.classList.remove('hidden');
+        elements.boardName.focus();
+    }
+
+    function openRenameBoardModal(boardId, title, description) {
+        state.editingBoardId = boardId;
+        state.boardModalMode = 'edit';
+        elements.boardModalTitle.textContent = 'Edit Board';
+        elements.boardName.value = unescapeHtml(title);
+        elements.boardDescription.value = unescapeHtml(description);
+        elements.saveBoardBtn.textContent = 'Save Changes';
+        elements.boardModal.classList.remove('hidden');
+        elements.boardName.focus();
+    }
+
+    function closeBoardModalInternal(preserveRoomFlow) {
+        elements.boardModal.classList.add('hidden');
+        state.editingBoardId = null;
+        if (state.boardModalMode === 'room' && !preserveRoomFlow) {
+            state.pendingRoomCreation = false;
+            state.pendingRoomBoardId = null;
+            state.pendingRoomBoardTitle = '';
+        }
+        state.boardModalMode = 'default';
+    }
+
+    function closeBoardModal(event) {
+        if (event && typeof event.preventDefault === 'function') {
+            event.preventDefault();
+        }
+        closeBoardModalInternal(false);
+    }
+
+    function handleSaveBoard() {
+        const title = elements.boardName.value.trim();
+        
+        console.log('handleSaveBoard called', { title, editingBoardId: state.editingBoardId });
+        
+        if (!title) {
+            alert('Please enter a board name');
+            elements.boardName.focus();
+            return;
+        }
+
+        const description = elements.boardDescription.value.trim();
+        const isRoomFlow = state.boardModalMode === 'room';
+        if (isRoomFlow) {
+            state.pendingRoomBoardTitle = title;
+        }
+
+        if (state.editingBoardId) {
+            // Update existing board
+            console.log('Updating board:', state.editingBoardId);
+            if (state.socket && state.socket.readyState === WebSocket.OPEN) {
+                state.socket.send(JSON.stringify({
+                    type: 'updateBoardTitle',
+                    boardId: state.editingBoardId,
+                    title: title,
+                    description: description
+                }));
+            } else {
+                console.error('WebSocket not connected');
+                alert('Connection lost. Please try again.');
+                return;
+            }
+        } else {
+            // Create new board
+            console.log('Creating new board:', { title, description });
+            if (state.socket && state.socket.readyState === WebSocket.OPEN) {
+                state.socket.send(JSON.stringify({
+                    type: 'createBoard',
+                    title: title,
+                    description: description
+                }));
+                console.log('Create board message sent');
+                if (isRoomFlow) {
+                    showNotification('Creating board for your room...', 'info');
+                }
+            } else {
+                console.error('WebSocket not connected');
+                alert('Connection lost. Please try again.');
+                return;
+            }
+        }
+
+        if (isRoomFlow) {
+            closeBoardModalInternal(true);
+        } else {
+            closeBoardModalInternal(false);
+        }
+    }
+
+    function openBoard(boardId) {
+        if (state.socket && state.socket.readyState === WebSocket.OPEN) {
+            state.socket.send(JSON.stringify({
+                type: 'openBoard',
+                boardId: boardId
+            }));
+            state.currentBoardId = boardId;
+            hideBoardsDashboard();
+        }
+    }
+
+    function duplicateBoard(boardId) {
+        if (state.socket && state.socket.readyState === WebSocket.OPEN) {
+            state.socket.send(JSON.stringify({
+                type: 'duplicateBoard',
+                boardId: boardId
+            }));
+        }
+    }
+
+    function openDeleteBoardModal(boardId, title) {
+        state.deletingBoardId = boardId;
+        elements.deleteBoardName.textContent = unescapeHtml(title);
+        elements.deleteBoardModal.classList.remove('hidden');
+    }
+
+    function closeDeleteModal() {
+        elements.deleteBoardModal.classList.add('hidden');
+        state.deletingBoardId = null;
+    }
+
+    function confirmDeleteBoard() {
+        if (state.deletingBoardId && state.socket && state.socket.readyState === WebSocket.OPEN) {
+            state.socket.send(JSON.stringify({
+                type: 'deleteBoard',
+                boardId: state.deletingBoardId
+            }));
+        }
+        closeDeleteModal();
+    }
+
+    function toggleBoardMenu(event, boardId) {
+        event.stopPropagation();
+        const menu = document.getElementById(`menu-${boardId}`);
+        const allMenus = document.querySelectorAll('.board-menu');
+        
+        allMenus.forEach(m => {
+            if (m !== menu) m.classList.remove('show');
+        });
+        
+        menu.classList.toggle('show');
+    }
+
+    // Utility functions
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+
+    function unescapeHtml(text) {
+        const div = document.createElement('div');
+        div.innerHTML = text;
+        return div.textContent;
+    }
+
+    function formatDate(dateString) {
+        const date = new Date(dateString);
+        const now = new Date();
+        const diff = now - date;
+        const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+        
+        if (days === 0) return 'Today';
+        if (days === 1) return 'Yesterday';
+        if (days < 7) return `${days} days ago`;
+        if (days < 30) return `${Math.floor(days / 7)} weeks ago`;
+        if (days < 365) return `${Math.floor(days / 30)} months ago`;
+        return date.toLocaleDateString();
+    }
+
+    // Make functions globally accessible for onclick handlers
+    window.toggleBoardMenu = toggleBoardMenu;
+    window.openBoard = openBoard;
+    window.openRenameBoardModal = openRenameBoardModal;
+    window.duplicateBoard = duplicateBoard;
+    window.openDeleteBoardModal = openDeleteBoardModal;
 
     function initCanvas() {
         state.canvas = elements.canvas;
@@ -308,9 +990,15 @@
             // Save initial blank canvas state for undo functionality
             saveHistoryState();
         }
+
+        updateZoomDisplay();
+        applyCanvasTransform();
     }
 
     function initEventListeners() {
+        if (elements.homeBtn) {
+            elements.homeBtn.addEventListener('click', goHome);
+        }
         // Canvas mouse events
         state.canvas.addEventListener('mousedown', startDrawing);
         state.canvas.addEventListener('mousemove', draw);
@@ -368,30 +1056,22 @@
             redrawCanvas();
         });
         
-        elements.snapToggle.addEventListener('click', () => {
-            state.snapToGrid = !state.snapToGrid;
-            elements.snapToggle.classList.toggle('active', state.snapToGrid);
-        });
+        if (elements.snapToggle) {
+            elements.snapToggle.addEventListener('click', () => {
+                state.snapToGrid = !state.snapToGrid;
+                elements.snapToggle.classList.toggle('active', state.snapToGrid);
+            });
+        }
         
-        elements.minimapToggle.addEventListener('click', () => {
-            state.showMinimap = !state.showMinimap;
-            elements.minimapToggle.classList.toggle('active', state.showMinimap);
-            redrawCanvas();
-        });
+        if (elements.minimapToggle) {
+            elements.minimapToggle.addEventListener('click', () => {
+                state.showMinimap = !state.showMinimap;
+                elements.minimapToggle.classList.toggle('active', state.showMinimap);
+                redrawCanvas();
+            });
+        }
         
-        // More options menu toggle
-        elements.moreOptionsBtn.addEventListener('click', () => {
-            elements.toolbarSecondary.classList.toggle('hidden');
-            elements.moreOptionsBtn.classList.toggle('active');
-        });
-        
-        // Close menu when clicking elsewhere
-        document.addEventListener('click', (e) => {
-            if (!e.target.closest('.toolbar')) {
-                elements.toolbarSecondary.classList.add('hidden');
-                elements.moreOptionsBtn.classList.remove('active');
-            }
-        });
+        // Secondary toolbar is now always visible - no toggle needed
         
         // Zoom controls
         elements.zoomIn.addEventListener('click', () => zoomCanvas(1.2));
@@ -401,7 +1081,7 @@
             state.panX = 0;
             state.panY = 0;
             updateZoomDisplay();
-            redrawCanvas();
+            applyCanvasTransform();
         });
         
         // Edit controls
@@ -506,6 +1186,9 @@
 
         // Logout button
         elements.logoutBtn.addEventListener('click', handleLogout);
+        if (elements.dashboardLogoutBtn) {
+            elements.dashboardLogoutBtn.addEventListener('click', handleLogout);
+        }
 
         // Login modal
         elements.closeLoginModal.addEventListener('click', () => {
@@ -626,6 +1309,34 @@
         }
     }
 
+    function clearStoredAuth() {
+        // Reset state locally
+        state.isLoggedIn = false;
+        state.currentUser = null;
+        state.userId = null;
+        state.username = '';
+        state.token = null;
+        state.currentBoardId = null;
+
+        if (state.autoSaveTimer) {
+            clearTimeout(state.autoSaveTimer);
+            state.autoSaveTimer = null;
+        }
+        if (state.autoSaveIntervalId) {
+            clearInterval(state.autoSaveIntervalId);
+            state.autoSaveIntervalId = null;
+        }
+        state.hasUnsavedChanges = false;
+
+        // Clear authentication state from localStorage
+        localStorage.removeItem('whiteboard_userId');
+        localStorage.removeItem('whiteboard_username');
+        localStorage.removeItem('whiteboard_token');
+
+        // Update UI
+        updateAuthUI();
+    }
+
     function handleLogout() {
         // Send logout request to WebSocket
         if (state.socket && state.socket.readyState === WebSocket.OPEN) {
@@ -634,21 +1345,8 @@
             }));
         }
         
-        // Reset state locally
-        state.isLoggedIn = false;
-        state.currentUser = null;
-        state.userId = null;
-        state.username = '';
-        state.token = null;
-        
-        // Clear authentication state from localStorage
-        localStorage.removeItem('whiteboard_userId');
-        localStorage.removeItem('whiteboard_username');
-        localStorage.removeItem('whiteboard_token');
-        
-        // Update UI
-        updateAuthUI();
-        showNotification('Logged out successfully', 'success');
+        clearStoredAuth();
+        // Notification will be shown by server response
     }
 
     function showAuthMessage(messageElement, message, type) {
@@ -681,6 +1379,15 @@
             elements.loginModal.classList.add('hidden');
             elements.registerModal.classList.add('hidden');
         }
+    }
+
+    function startAutoSaveInterval() {
+        if (state.autoSaveIntervalId) return;
+        state.autoSaveIntervalId = setInterval(() => {
+            if (state.hasUnsavedChanges) {
+                performAutoSave('interval');
+            }
+        }, CONFIG.AUTO_SAVE_INTERVAL);
     }
 
     function checkUrlForRoomCode() {
@@ -731,6 +1438,16 @@
                 state.socket.send(JSON.stringify({ type: 'ping' }));
             }
         }, CONFIG.PING_INTERVAL);
+
+        // Restore authenticated session after reconnect
+        if (state.isLoggedIn && state.token) {
+            state.socket.send(JSON.stringify({
+                type: 'restoreSession',
+                token: state.token
+            }));
+        } else if (sessionStorage.getItem('whiteboard_guest')) {
+            state.socket.send(JSON.stringify({ type: 'guestMode' }));
+        }
     }
 
     function handleSocketMessage(event) {
@@ -771,9 +1488,50 @@
                     localStorage.setItem('whiteboard_username', data.username);
                     localStorage.setItem('whiteboard_token', data.token);
                     
+                    // Clear guest session if exists
+                    sessionStorage.removeItem('whiteboard_guest');
+                    
+                    // Hide guest banner
+                    const guestBanner = document.getElementById('guestBanner');
+                    if (guestBanner) {
+                        guestBanner.classList.add('hidden');
+                    }
+                    
                     updateAuthUI();
                     elements.loginModal.classList.add('hidden');
                     showNotification(`Welcome, ${data.username}!`, 'success');
+                    startAutoSaveInterval();
+                    
+                    // Show boards dashboard
+                    showBoardsDashboard();
+                    break;
+
+                case 'sessionRestored':
+                    state.isLoggedIn = true;
+                    state.userId = data.userId;
+                    state.username = data.username;
+                    state.token = data.token || state.token;
+                    state.currentUser = {
+                        id: data.userId,
+                        username: data.username
+                    };
+
+                    // Refresh auth UI and dashboard
+                    updateAuthUI();
+                    startAutoSaveInterval();
+                    showBoardsDashboard();
+                    requestBoardsList();
+                    break;
+
+                case 'sessionRestoreFailed':
+                    clearStoredAuth();
+                    showNotification(data.message || 'Session expired. Please log in again.', 'error');
+                    if (elements.loginModal) {
+                        elements.loginModal.classList.remove('hidden');
+                        if (elements.loginUsername) {
+                            elements.loginUsername.focus();
+                        }
+                    }
                     break;
                     
                 case 'loginFailed':
@@ -789,6 +1547,95 @@
                     updateAuthUI();
                     showNotification('Logged out successfully', 'success');
                     break;
+                
+                case 'guestModeActivated':
+                    console.log('Guest mode activated:', data);
+                    showNotification('Guest mode activated. Work will not be saved.', 'info');
+                    break;
+                
+                // Board Management
+                case 'boardsList':
+                    renderBoards(data.boards);
+                    break;
+                    
+                case 'boardCreated':
+                    showNotification('Board created successfully!', 'success');
+                    requestBoardsList();
+                    if (data.boardId) {
+                        // Optionally open the newly created board
+                        openBoard(data.boardId);
+                    }
+                    break;
+                    
+                case 'boardOpened':
+                    console.log('Board opened:', data);
+                    if (data.boardId) {
+                        state.currentBoardId = data.boardId;
+                    }
+                    if (data.title) {
+                        state.currentBoardTitle = data.title;
+                    }
+                    const boardImage = data.canvasData || data.data;
+                    if (!applyBoardCanvasSnapshot(boardImage)) {
+                        // Clear canvas for new board
+                        state.ctx.fillStyle = '#FFFFFF';
+                        state.ctx.fillRect(0, 0, state.canvas.width, state.canvas.height);
+                        saveHistoryState();
+                    }
+                    if (state.isRoomOwner) {
+                        state.roomBoardTitle = state.currentBoardTitle;
+                    }
+                    if (state.pendingRoomCreation) {
+                        finalizePendingRoomCreation();
+                    }
+                    state.hasUnsavedChanges = false;
+                    hideBoardsDashboard();
+                    updateRoomUI();
+                    showNotification('Board opened', 'success');
+                    break;
+
+                case 'boardSaved':
+                    updateSaveStatus('saved');
+                    state.hasUnsavedChanges = false;
+                    if (state.awaitingRoomSaveForRoom && state.queuedRoomBoardId) {
+                        const queuedBoardId = state.queuedRoomBoardId;
+                        const queuedOptions = state.queuedRoomOptions || {};
+                        state.awaitingRoomSaveForRoom = false;
+                        state.queuedRoomBoardId = null;
+                        state.queuedRoomOptions = null;
+                        const nextOptions = Object.assign({}, queuedOptions, { skipSync: true });
+                        sendCreateRoomRequest(queuedBoardId, nextOptions);
+                    }
+                    break;
+                    
+                case 'boardUpdated':
+                    showNotification('Board updated successfully!', 'success');
+                    requestBoardsList();
+                    break;
+
+                case 'boardTitleUpdated':
+                    if (data.boardId && state.currentBoardId && Number(data.boardId) === Number(state.currentBoardId)) {
+                        if (data.title) {
+                            state.currentBoardTitle = data.title;
+                            if (state.isInRoom && state.isApproved) {
+                                state.roomBoardTitle = data.title;
+                            }
+                            updateRoomUI();
+                        }
+                    }
+                    requestBoardsList();
+                    showNotification('Board title updated', 'success');
+                    break;
+                    
+                case 'boardDeleted':
+                    showNotification('Board deleted', 'success');
+                    requestBoardsList();
+                    break;
+                    
+                case 'boardDuplicated':
+                    showNotification('Board duplicated successfully!', 'success');
+                    requestBoardsList();
+                    break;
 
                 case 'welcome':
                     state.sessionId = data.sessionId;
@@ -796,14 +1643,23 @@
                     break;
                     
                 case 'draw':
+                    if (state.isReceivingHistory) {
+                        state.historyEventCount++;
+                    }
                     drawRemoteStroke(data);
                     break;
                     
                 case 'shape':
+                    if (state.isReceivingHistory) {
+                        state.historyEventCount++;
+                    }
                     drawRemoteShape(data);
                     break;
                     
                 case 'text':
+                    if (state.isReceivingHistory) {
+                        state.historyEventCount++;
+                    }
                     state.ctx.fillStyle = data.color;
                     state.ctx.font = data.size + 'px monospace';
                     state.ctx.fillText(data.text, data.x, data.y);
@@ -818,8 +1674,15 @@
                     break;
                     
                 case 'clear':
-                    clearCanvasLocal();
-                    showNotification('Canvas cleared', 'info');
+                    if (state.isReceivingHistory) {
+                        state.historyEventCount++;
+                    }
+                    const sameBoard = !data.boardId || !state.currentBoardId || Number(data.boardId) === Number(state.currentBoardId);
+                    const sameRoom = !data.roomCode || !state.roomCode || data.roomCode === state.roomCode;
+                    if (sameBoard && sameRoom) {
+                        clearCanvasLocal();
+                        showNotification('Canvas cleared', 'info');
+                    }
                     break;
                     
                 case 'userCount':
@@ -828,6 +1691,7 @@
                     
                 case 'historyStart':
                     state.isReceivingHistory = true;
+                    state.historyEventCount = 0;
                     // Clear canvas before loading history
                     state.ctx.fillStyle = '#FFFFFF';
                     state.ctx.fillRect(0, 0, state.canvas.width, state.canvas.height);
@@ -835,6 +1699,14 @@
                     
                 case 'historyEnd':
                     state.isReceivingHistory = false;
+                    if (state.shouldRestoreSnapshotAfterHistory && state.historyEventCount === 0 && state.lastReceivedCanvasSnapshot) {
+                        applyBoardCanvasSnapshot(state.lastReceivedCanvasSnapshot);
+                    }
+                    if (state.historyEventCount > 0) {
+                        state.lastReceivedCanvasSnapshot = null;
+                    }
+                    state.shouldRestoreSnapshotAfterHistory = false;
+                    state.historyEventCount = 0;
                     showNotification('Canvas history loaded', 'success');
                     break;
                     
@@ -880,12 +1752,22 @@
                     handleRoomClosed(data);
                     break;
                     
-                case 'leftRoom':
+                case 'leftRoom': {
+                    const wasOwner = state.isRoomOwner;
+                    const wasInRoom = state.isInRoom;
                     resetRoomState();
+                    if (wasInRoom) {
+                        showBoardsDashboard();
+                    }
                     showNotification('You left the room', 'info');
                     break;
+                }
                     
                 case 'error':
+                    // Check if it's a save-related error
+                    if (data.message && data.message.toLowerCase().includes('save')) {
+                        updateSaveStatus('error');
+                    }
                     // Handle auth errors in modals
                     if (!elements.loginModal.classList.contains('hidden')) {
                         showAuthMessage(elements.loginMessage, data.message, 'error');
@@ -893,6 +1775,15 @@
                         showAuthMessage(elements.registerMessage, data.message, 'error');
                     } else {
                         showNotification(data.message, 'error');
+                    }
+                    if (state.awaitingRoomSaveForRoom && state.queuedRoomBoardId) {
+                        const queuedBoardId = state.queuedRoomBoardId;
+                        const queuedOptions = state.queuedRoomOptions || {};
+                        state.awaitingRoomSaveForRoom = false;
+                        state.queuedRoomBoardId = null;
+                        state.queuedRoomOptions = null;
+                        const retryOptions = Object.assign({}, queuedOptions, { skipSync: true });
+                        sendCreateRoomRequest(queuedBoardId, retryOptions);
                     }
                     break;
                     
@@ -947,7 +1838,8 @@
             tool: state.currentTool,
             strokeWidth: state.currentTool === 'eraser' ? state.strokeWidth * 3 : state.strokeWidth,
             lineStyle: state.lineStyle,
-            username: state.username || 'Anonymous'
+            username: state.username || 'Anonymous',
+            boardId: state.currentBoardId || null
         };
         
         state.socket.send(JSON.stringify(event));
@@ -1004,18 +1896,86 @@
     // ========================================
     // Live Cursor Functions
     // ========================================
+
+    function startCreateRoomFlow() {
+        state.pendingRoomCreation = true;
+        state.pendingRoomBoardId = null;
+        state.pendingRoomBoardTitle = '';
+        openCreateBoardModal('room');
+    }
+
+    function sendCreateRoomRequest(boardId, options = {}) {
+        if (!boardId) {
+            showNotification('Open or create a board before starting a room.', 'warning');
+            return;
+        }
+
+        const numericBoardId = Number(boardId);
+        if (!Number.isFinite(numericBoardId) || numericBoardId <= 0) {
+            showNotification('Could not determine the board to share.', 'error');
+            return;
+        }
+
+        state.currentBoardId = numericBoardId;
+        const titleForRoom = state.pendingRoomBoardTitle || state.currentBoardTitle || state.roomBoardTitle;
+        if (titleForRoom) {
+            state.roomBoardTitle = titleForRoom;
+        }
+
+        if (options.skipSync !== true) {
+            const syncOptions = Object.assign({}, options, { forceSync: true });
+            const waitingForSave = syncBoardStateForRoomShare(numericBoardId, syncOptions);
+            if (waitingForSave) {
+                return;
+            }
+        }
+
+        dispatchCreateRoom(numericBoardId);
+    }
+
+    function dispatchCreateRoom(boardId) {
+        state.awaitingRoomSaveForRoom = false;
+        state.queuedRoomBoardId = null;
+        state.queuedRoomOptions = null;
+
+        sendMessage({
+            type: 'createRoom',
+            boardId: boardId
+        });
+    }
+
+    function finalizePendingRoomCreation() {
+        if (!state.pendingRoomCreation) {
+            return;
+        }
+        const boardId = state.pendingRoomBoardId || state.currentBoardId;
+        if (!boardId) {
+            return;
+        }
+
+        if (state.pendingRoomBoardTitle) {
+            state.currentBoardTitle = state.pendingRoomBoardTitle;
+        }
+
+        const pendingOptions = state.pendingRoomOptions || {};
+        sendCreateRoomRequest(boardId, pendingOptions);
+        state.pendingRoomCreation = false;
+        state.pendingRoomBoardId = null;
+        state.pendingRoomBoardTitle = '';
+        state.pendingRoomOptions = null;
+    }
     function sendCursorPosition(x, y) {
         if (!state.isConnected || !state.socket || !state.username) return;
-        
-        // Send screen coordinates, not canvas coordinates
+
+        // Convert canvas coordinates to screen coordinates before sending
         const rect = state.canvas.getBoundingClientRect();
         const screenX = x + rect.left;
         const screenY = y + rect.top;
-        
+
         sendMessage({
             type: 'cursor',
-            x: Math.round(screenX),
-            y: Math.round(screenY),
+            x: screenX,
+            y: screenY,
             username: state.username,
             sessionId: state.sessionId
         });
@@ -1026,6 +1986,7 @@
         let cursorEl = document.getElementById(cursorId);
         
         if (!cursorEl) {
+        state.pendingRoomCreation = false;
             cursorEl = document.createElement('div');
             cursorEl.id = cursorId;
             cursorEl.className = 'user-cursor';
@@ -1075,15 +2036,19 @@
     // ========================================
     // Room Functions
     // ========================================
-    function createRoom() {
-        sendMessage({ type: 'createRoom' });
-    }
-
     function handleRoomCreated(data) {
         state.roomCode = data.roomCode;
         state.isRoomOwner = true;
         state.isInRoom = true;
         state.isApproved = true;
+        if (typeof data.boardId === 'number') {
+            state.currentBoardId = data.boardId;
+        }
+        if (data.boardTitle) {
+            state.roomBoardTitle = data.boardTitle;
+        } else if (state.currentBoardTitle) {
+            state.roomBoardTitle = state.currentBoardTitle;
+        }
         
         updateRoomUI();
         showNotification('Room created! Share the code to invite others.', 'success');
@@ -1091,6 +2056,15 @@
     }
 
     function showJoinModal() {
+        if (state.isLoggedIn && state.username) {
+            elements.joinUsername.value = state.username;
+            elements.joinUsername.readOnly = true;
+            elements.joinUsername.classList.add('readonly');
+        } else {
+            elements.joinUsername.readOnly = false;
+            elements.joinUsername.classList.remove('readonly');
+            elements.joinUsername.value = '';
+        }
         elements.joinModal.classList.remove('hidden');
         elements.joinRoomCode.focus();
     }
@@ -1098,12 +2072,16 @@
     function hideJoinModal() {
         elements.joinModal.classList.add('hidden');
         elements.joinRoomCode.value = '';
+        elements.joinUsername.readOnly = false;
+        elements.joinUsername.classList.remove('readonly');
         elements.joinUsername.value = '';
     }
 
     function joinRoom() {
         const roomCode = elements.joinRoomCode.value.trim().toUpperCase();
-        const username = elements.joinUsername.value.trim() || 'Anonymous';
+        const username = (state.isLoggedIn && state.username)
+            ? state.username
+            : (elements.joinUsername.value.trim() || 'Anonymous');
         
         if (roomCode.length !== 6) {
             showNotification('Please enter a valid 6-character room code', 'error');
@@ -1137,7 +2115,29 @@
     function handleApproved(data) {
         elements.waitingModal.classList.add('hidden');
         state.isApproved = true;
-        
+        state.isInRoom = true;
+        state.isRoomOwner = false;
+        if (data.roomCode) {
+            state.roomCode = data.roomCode;
+        }
+        if (typeof data.boardId === 'number') {
+            state.currentBoardId = data.boardId;
+        }
+        if (data.boardTitle) {
+            state.currentBoardTitle = data.boardTitle;
+            state.roomBoardTitle = data.boardTitle;
+        } else if (!state.roomBoardTitle && state.currentBoardTitle) {
+            state.roomBoardTitle = state.currentBoardTitle;
+        }
+        if (data.canvasData) {
+            state.shouldRestoreSnapshotAfterHistory = true;
+            state.historyEventCount = 0;
+            applyBoardCanvasSnapshot(data.canvasData);
+        } else {
+            state.shouldRestoreSnapshotAfterHistory = false;
+            state.lastReceivedCanvasSnapshot = null;
+        }
+
         updateRoomUI();
         updateUserCount(data.userCount);
         showNotification('You have been approved! You can now draw.', 'success');
@@ -1212,17 +2212,19 @@
             }
         }
 
-        // Clear canvas when leaving room to remove collaborative content
-        clearCanvasLocal();
-
         sendMessage({ type: 'leaveRoom' });
     }
 
     function handleRoomClosed(data) {
+        const wasOwner = state.isRoomOwner;
+        const wasInRoom = state.isInRoom;
         elements.waitingModal.classList.add('hidden');
         elements.requestModal.classList.add('hidden');
         showNotification(data.reason || 'Room has been closed', 'warning');
         resetRoomState();
+        if (wasInRoom) {
+            showBoardsDashboard();
+        }
     }
 
     function resetRoomState() {
@@ -1232,22 +2234,85 @@
         state.isApproved = false;
         state.pendingRequests = [];
         state.currentRequest = null;
+        state.roomBoardTitle = '';
+        state.pendingRoomCreation = false;
+        state.pendingRoomOptions = null;
+        state.awaitingRoomSaveForRoom = false;
+        state.queuedRoomBoardId = null;
+        state.queuedRoomOptions = null;
         
         updateRoomUI();
     }
 
     function updateRoomUI() {
         const inRoom = state.isInRoom && state.isApproved;
-        
-        elements.roomBadge.classList.toggle('hidden', !inRoom);
-        elements.roomCodeDisplay.textContent = state.roomCode || '-';
-        
-        elements.createRoomBtn.classList.toggle('hidden', inRoom);
-        elements.joinRoomBtn.classList.toggle('hidden', inRoom);
-        elements.leaveRoomBtn.classList.toggle('hidden', !inRoom);
-        elements.shareRoomBtn.classList.toggle('hidden', !state.isRoomOwner);
-        
-        elements.pendingRequests.classList.toggle('hidden', !state.isRoomOwner || state.pendingRequests.length === 0);
+        const hasBoardTitle = inRoom && !!state.roomBoardTitle;
+
+        if (elements.roomBadge) {
+            elements.roomBadge.classList.toggle('hidden', !inRoom);
+        }
+        if (elements.roomCodeDisplay) {
+            elements.roomCodeDisplay.textContent = state.roomCode || '-';
+        }
+        if (elements.roomBoardTitle) {
+            elements.roomBoardTitle.textContent = hasBoardTitle ? state.roomBoardTitle : '';
+            elements.roomBoardTitle.classList.toggle('hidden', !hasBoardTitle);
+        }
+        if (elements.copyRoomCode) {
+            elements.copyRoomCode.disabled = !inRoom;
+            elements.copyRoomCode.classList.toggle('hidden', !inRoom);
+        }
+        if (elements.leaveRoomBtn) {
+            elements.leaveRoomBtn.classList.toggle('hidden', !inRoom);
+            elements.leaveRoomBtn.disabled = !inRoom;
+        }
+        if (elements.shareRoomBtn) {
+            elements.shareRoomBtn.classList.toggle('hidden', !inRoom);
+            elements.shareRoomBtn.disabled = !inRoom;
+        }
+        if (elements.createRoomBtn) {
+            const showCreate = !state.isInRoom;
+            elements.createRoomBtn.classList.toggle('hidden', !showCreate);
+            elements.createRoomBtn.disabled = !showCreate || state.pendingRoomCreation;
+            elements.createRoomBtn.classList.toggle('loading', state.pendingRoomCreation);
+        }
+        if (elements.joinRoomBtn) {
+            elements.joinRoomBtn.disabled = state.pendingRoomCreation || state.isInRoom;
+        }
+        if (elements.pendingRequests) {
+            const showPending = state.isRoomOwner && state.pendingRequests.length > 0;
+            elements.pendingRequests.classList.toggle('hidden', !showPending);
+            const countEl = elements.pendingRequests.querySelector('.pending-count');
+            if (countEl) {
+                countEl.textContent = state.pendingRequests.length;
+            }
+        }
+    }
+
+    function createRoom(options = {}) {
+        const forceNewBoard = options.forceNewBoard === true;
+        const fromDashboard = options.fromDashboard === true;
+
+        if (state.isInRoom && state.isApproved) {
+            showNotification('You already have an active room.', 'info');
+            return;
+        }
+        if (state.pendingRoomCreation) {
+            showNotification('Finish creating the board for this room first.', 'info');
+            return;
+        }
+
+        if (fromDashboard) {
+            hideBoardsDashboard();
+        }
+
+        if (forceNewBoard || !state.currentBoardId) {
+            state.pendingRoomOptions = Object.assign({}, options);
+            startCreateRoomFlow();
+            return;
+        }
+
+        sendCreateRoomRequest(state.currentBoardId, options);
     }
 
     function showShareModal() {
@@ -1320,7 +2385,7 @@
         if (e.buttons === 4) {
             state.panX += coords.x - state.lastX;
             state.panY += coords.y - state.lastY;
-            redrawCanvas();
+            applyCanvasTransform();
             state.lastX = coords.x;
             state.lastY = coords.y;
             return;
@@ -1369,6 +2434,7 @@
         if (!state.isDrawing) return;
         
         state.isDrawing = false;
+        let didModify = false;
         
         // For shapes, finalize or cancel the drawing
         if (state.shapeStart && ['line', 'rectangle', 'circle', 'arrow'].includes(state.currentTool)) {
@@ -1404,7 +2470,9 @@
                     color: state.currentColor,
                     strokeWidth: state.strokeWidth,
                     lineStyle: state.lineStyle,
-                    constraint: state.shapeConstraint
+                    constraint: state.shapeConstraint,
+                    username: state.username || 'Anonymous',
+                    boardId: state.currentBoardId || null
                 };
                 
                 if (state.socket && state.socket.readyState === WebSocket.OPEN) {
@@ -1412,6 +2480,7 @@
                 }
                 
                 saveHistoryState();
+                didModify = true;
             } else {
                 // Cancel shape - restore original canvas state
                 if (state.shapePreviewData) {
@@ -1422,6 +2491,14 @@
             state.shapeStart = null;
             state.shapePreviewActive = false;
             state.shapePreviewData = null;
+        }
+
+        if (['pen', 'eraser', 'highlighter'].includes(state.currentTool)) {
+            didModify = true;
+        }
+
+        if (didModify) {
+            markDirty();
         }
     }
 
@@ -1541,6 +2618,9 @@
     }
 
     function drawRemoteStroke(data) {
+        if (!matchesCurrentBoard(data.boardId)) {
+            return;
+        }
         if (data.tool === 'eraser') {
             drawStroke(data.x1, data.y1, data.x2, data.y2, '#FFFFFF', data.strokeWidth * 3, 'solid');
         } else if (data.tool === 'highlighter') {
@@ -1551,9 +2631,12 @@
     }
 
     function drawRemoteShape(data) {
+        if (!matchesCurrentBoard(data.boardId)) {
+            return;
+        }
         switch(data.tool) {
             case 'line':
-                drawLine(data.x1, data.y1, data.x2, data.y2, data.color, data.strokeWidth, data.lineStyle);
+                drawLine(data.x1, data.y1, data.x2, data.y2, data.color, data.strokeWidth, data.lineStyle || 'solid');
                 break;
             case 'rectangle':
                 drawRectangle(data.x1, data.y1, data.x2, data.y2, data.color, data.strokeWidth, data.constraint);
@@ -1562,17 +2645,30 @@
                 drawCircle(data.x1, data.y1, data.x2, data.y2, data.color, data.strokeWidth, data.constraint);
                 break;
             case 'arrow':
-                drawArrow(data.x1, data.y1, data.x2, data.y2, data.color, data.strokeWidth, data.lineStyle);
+                drawArrow(data.x1, data.y1, data.x2, data.y2, data.color, data.strokeWidth, data.lineStyle || 'solid');
                 break;
         }
     }
 
+    function matchesCurrentBoard(eventBoardId) {
+        if (eventBoardId === undefined) {
+            return true;
+        }
+        if (eventBoardId === null) {
+            return !state.currentBoardId;
+        }
+        if (!state.currentBoardId) {
+            return true;
+        }
+        return Number(eventBoardId) === Number(state.currentBoardId);
+    }
+
     function getCanvasCoordinates(e) {
         const rect = state.canvas.getBoundingClientRect();
-        let x = e.clientX - rect.left;
-        let y = e.clientY - rect.top;
+        let x = (e.clientX - rect.left) / state.zoom;
+        let y = (e.clientY - rect.top) / state.zoom;
         
-        // Fixed canvas - no pan/zoom transformations
+        // Apply snap to grid if enabled
         // Snap to grid if enabled
         if (state.snapToGrid) {
             x = Math.round(x / state.gridSize) * state.gridSize;
@@ -1621,6 +2717,7 @@
             }
             document.body.removeChild(input);
             saveHistoryState();
+            markDirty();
         };
         
         input.addEventListener('blur', finishText);
@@ -1693,11 +2790,16 @@
         state.zoom = Math.max(0.5, Math.min(5, state.zoom)); // Clamp between 0.5x and 5x
         
         updateZoomDisplay();
-        redrawCanvas();
+        applyCanvasTransform();
     }
 
     function updateZoomDisplay() {
         elements.zoomLevel.textContent = Math.round(state.zoom * 100) + '%';
+    }
+
+    function applyCanvasTransform() {
+        state.canvas.style.transformOrigin = '0 0';
+        state.canvas.style.transform = `translate(${state.panX}px, ${state.panY}px) scale(${state.zoom})`;
     }
 
     // ========================================
@@ -1788,6 +2890,7 @@
             const imageData = state.history[state.historyIndex];
             state.ctx.putImageData(imageData, 0, 0);
             updateHistoryButtons();
+            markDirty();
         }
     }
 
@@ -1797,6 +2900,7 @@
             const imageData = state.history[state.historyIndex];
             state.ctx.putImageData(imageData, 0, 0);
             updateHistoryButtons();
+            markDirty();
         }
     }
 
@@ -1809,26 +2913,17 @@
     // Canvas Redraw
     // ========================================
     function redrawCanvas() {
+        const snapshot = state.ctx.getImageData(0, 0, state.canvas.width, state.canvas.height);
+
         // Clear canvas
         state.ctx.fillStyle = '#FFFFFF';
         state.ctx.fillRect(0, 0, state.canvas.width, state.canvas.height);
-        
-        // Apply transformations
-        state.ctx.save();
-        state.ctx.translate(state.panX, state.panY);
-        state.ctx.scale(state.zoom, state.zoom);
-        
-        // Draw grid
-        state.ctx.restore();
+
+        // Restore drawing
+        state.ctx.putImageData(snapshot, 0, 0);
+
+        // Draw overlays
         drawGrid();
-        
-        // Restore transformations for drawing
-        state.ctx.save();
-        state.ctx.translate(state.panX, state.panY);
-        state.ctx.scale(state.zoom, state.zoom);
-        state.ctx.restore();
-        
-        // Draw minimap
         drawMinimap();
     }
 
@@ -1842,9 +2937,14 @@
         }
         
         if (confirm('Are you sure you want to clear the canvas? This will clear for all users.')) {
-            state.socket.send(JSON.stringify({ type: 'clear' }));
+            state.socket.send(JSON.stringify({
+                type: 'clear',
+                boardId: state.currentBoardId || null,
+                roomCode: state.roomCode || null
+            }));
             clearCanvasLocal();
             saveHistoryState();
+            markDirty();
         }
     }
 
@@ -1888,6 +2988,87 @@
         downloadCanvas();
     }
 
+    function markDirty() {
+        state.hasUnsavedChanges = true;
+        scheduleAutoSave();
+    }
+
+    function scheduleAutoSave() {
+        if (!state.isLoggedIn || !state.currentBoardId) return;
+        if (!state.socket || state.socket.readyState !== WebSocket.OPEN) return;
+
+        if (state.autoSaveTimer) {
+            clearTimeout(state.autoSaveTimer);
+        }
+
+        state.autoSaveTimer = setTimeout(() => {
+            performAutoSave('debounce');
+        }, CONFIG.AUTO_SAVE_DEBOUNCE);
+    }
+
+    function performAutoSave(reason) {
+        if (!state.hasUnsavedChanges) return;
+        if (!state.isLoggedIn || !state.currentBoardId) return;
+        if (!state.socket || state.socket.readyState !== WebSocket.OPEN) return;
+
+        updateSaveStatus('saving');
+        const canvasData = state.canvas.toDataURL('image/jpeg', 0.7);
+        state.socket.send(JSON.stringify({
+            type: 'saveBoard',
+            canvasData: canvasData
+        }));
+
+        state.lastAutoSaveAt = Date.now();
+        state.hasUnsavedChanges = false;
+        if (reason === 'manual') {
+            showNotification('Board saved', 'success');
+        }
+    }
+
+    function syncBoardStateForRoomShare(boardId, options = {}) {
+        if (!state.currentBoardId) return false;
+        if (!state.socket || state.socket.readyState !== WebSocket.OPEN) return false;
+
+        const numericBoardId = Number(boardId);
+        if (!Number.isFinite(numericBoardId) || numericBoardId <= 0) {
+            return false;
+        }
+
+        if (state.awaitingRoomSaveForRoom) {
+            return true;
+        }
+
+        if (!state.hasUnsavedChanges && !options.forceSync) {
+            return false;
+        }
+
+        state.awaitingRoomSaveForRoom = true;
+        state.queuedRoomBoardId = numericBoardId;
+        state.queuedRoomOptions = options;
+
+        updateSaveStatus('saving');
+        const canvasData = state.canvas.toDataURL('image/jpeg', 0.7);
+        sendMessage({
+            type: 'saveBoard',
+            canvasData
+        });
+        state.lastRoomShareSyncAt = Date.now();
+        state.lastAutoSaveAt = Date.now();
+        // keep hasUnsavedChanges until acknowledgement arrives
+        return true;
+    }
+
+    function goHome() {
+        if (state.isLoggedIn) {
+            if (state.hasUnsavedChanges) {
+                performAutoSave('home');
+            }
+            showBoardsDashboard();
+        } else {
+            showNotification('Please log in to access boards', 'info');
+        }
+    }
+
     // ========================================
     // UI Updates
     // ========================================
@@ -1898,6 +3079,42 @@
         status.classList.remove('connected', 'disconnected');
         status.classList.add(connected ? 'connected' : 'disconnected');
         statusText.textContent = connected ? 'Connected' : 'Disconnected';
+    }
+
+    function updateSaveStatus(status) {
+        const saveStatus = elements.saveStatus;
+        if (!saveStatus) return;
+        
+        const saveIcon = saveStatus.querySelector('.save-icon');
+        const saveText = saveStatus.querySelector('.save-text');
+        
+        saveStatus.classList.remove('hidden', 'saving', 'saved', 'error');
+        
+        switch (status) {
+            case 'saving':
+                saveStatus.classList.add('saving');
+                saveIcon.textContent = '💾';
+                saveText.textContent = 'Saving...';
+                break;
+            case 'saved':
+                saveStatus.classList.add('saved');
+                saveIcon.textContent = '✓';
+                saveText.textContent = 'Saved';
+                // Hide after 3 seconds
+                setTimeout(() => {
+                    if (saveStatus.classList.contains('saved')) {
+                        saveStatus.classList.add('hidden');
+                    }
+                }, 3000);
+                break;
+            case 'error':
+                saveStatus.classList.add('error');
+                saveIcon.textContent = '⚠️';
+                saveText.textContent = 'Save failed';
+                break;
+            default:
+                saveStatus.classList.add('hidden');
+        }
     }
 
     function updateUserCount(count) {
@@ -1932,6 +3149,13 @@
         if ((e.ctrlKey || e.metaKey) && e.key === 'z') {
             e.preventDefault();
             undo();
+            return;
+        }
+
+        // Handle Ctrl/Cmd + S for save
+        if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+            e.preventDefault();
+            performAutoSave('manual');
             return;
         }
         
@@ -1980,7 +3204,9 @@
                 break;
             case 'm':
                 state.showMinimap = !state.showMinimap;
-                elements.minimapToggle.classList.toggle('active', state.showMinimap);
+                if (elements.minimapToggle) {
+                    elements.minimapToggle.classList.toggle('active', state.showMinimap);
+                }
                 redrawCanvas();
                 break;
             case '+':
@@ -2000,7 +3226,7 @@
                     state.panX = 0;
                     state.panY = 0;
                     updateZoomDisplay();
-                    redrawCanvas();
+                    applyCanvasTransform();
                 }
                 break;
             case 'delete':

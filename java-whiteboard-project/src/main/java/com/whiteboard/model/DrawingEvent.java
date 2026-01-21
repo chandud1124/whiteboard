@@ -9,6 +9,7 @@ import java.sql.Timestamp;
 public class DrawingEvent {
     
     private Long id;
+    private Long boardId;
     private String sessionId;
     private String roomCode;
     private String username;
@@ -19,6 +20,7 @@ public class DrawingEvent {
     private String color;
     private String tool;
     private int strokeWidth;
+    private String lineStyle;
     private Timestamp timestamp;
     
     // Default constructor
@@ -26,6 +28,7 @@ public class DrawingEvent {
         this.color = "#000000";
         this.tool = "pen";
         this.strokeWidth = 3;
+        this.lineStyle = "solid";
     }
     
     // Constructor with coordinates
@@ -48,6 +51,7 @@ public class DrawingEvent {
         this.color = color;
         this.tool = tool;
         this.strokeWidth = strokeWidth;
+        this.lineStyle = "solid";
     }
     
     // Getters and Setters
@@ -57,6 +61,14 @@ public class DrawingEvent {
     
     public void setId(Long id) {
         this.id = id;
+    }
+
+    public Long getBoardId() {
+        return boardId;
+    }
+
+    public void setBoardId(Long boardId) {
+        this.boardId = boardId;
     }
     
     public String getSessionId() {
@@ -138,6 +150,14 @@ public class DrawingEvent {
     public void setStrokeWidth(int strokeWidth) {
         this.strokeWidth = strokeWidth;
     }
+
+    public String getLineStyle() {
+        return lineStyle;
+    }
+
+    public void setLineStyle(String lineStyle) {
+        this.lineStyle = (lineStyle == null || lineStyle.isEmpty()) ? "solid" : lineStyle;
+    }
     
     public Timestamp getTimestamp() {
         return timestamp;
@@ -153,8 +173,16 @@ public class DrawingEvent {
     public String toJson() {
         return String.format(
             "{\"type\":\"draw\",\"x1\":%d,\"y1\":%d,\"x2\":%d,\"y2\":%d," +
-            "\"color\":\"%s\",\"tool\":\"%s\",\"strokeWidth\":%d,\"sessionId\":\"%s\",\"username\":\"%s\"}",
-            x1, y1, x2, y2, color, tool, strokeWidth, sessionId != null ? sessionId : "", username != null ? username : ""
+            "\"color\":\"%s\",\"tool\":\"%s\",\"strokeWidth\":%d,\"lineStyle\":\"%s\"," +
+            "\"sessionId\":\"%s\",\"username\":\"%s\",\"boardId\":%s}",
+            x1, y1, x2, y2,
+            color != null ? color : "#000000",
+            tool != null ? tool : "pen",
+            strokeWidth,
+            lineStyle != null ? lineStyle : "solid",
+            sessionId != null ? sessionId : "",
+            username != null ? username : "",
+            boardId != null ? boardId.toString() : "null"
         );
     }
     
@@ -175,6 +203,12 @@ public class DrawingEvent {
             event.setStrokeWidth(extractInt(json, "strokeWidth"));
             event.setSessionId(extractString(json, "sessionId"));
             event.setUsername(extractString(json, "username"));
+            Long boardId = extractLong(json, "boardId");
+            if (boardId != null) {
+                event.setBoardId(boardId);
+            }
+            String style = extractString(json, "lineStyle");
+            event.setLineStyle(style);
         } catch (Exception e) {
             System.err.println("Error parsing JSON: " + e.getMessage());
         }
@@ -211,11 +245,30 @@ public class DrawingEvent {
         
         return json.substring(start, end);
     }
+
+    private static Long extractLong(String json, String key) {
+        String pattern = "\"" + key + "\":";
+        int start = json.indexOf(pattern);
+        if (start == -1) return null;
+
+        start += pattern.length();
+        int end = start;
+        while (end < json.length() && (Character.isDigit(json.charAt(end)) || json.charAt(end) == '-')) {
+            end++;
+        }
+
+        try {
+            return Long.parseLong(json.substring(start, end));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
     
     @Override
     public String toString() {
         return "DrawingEvent{" +
                 "id=" + id +
+                ", boardId=" + boardId +
                 ", sessionId='" + sessionId + '\'' +
                 ", username='" + username + '\'' +
                 ", x1=" + x1 +
@@ -225,6 +278,7 @@ public class DrawingEvent {
                 ", color='" + color + '\'' +
                 ", tool='" + tool + '\'' +
                 ", strokeWidth=" + strokeWidth +
+                ", lineStyle='" + lineStyle + '\'' +
                 ", timestamp=" + timestamp +
                 '}';
     }
