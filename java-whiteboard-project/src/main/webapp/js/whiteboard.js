@@ -251,7 +251,6 @@
         chatMessages: document.getElementById('chatMessages'),
         chatInput: document.getElementById('chatInput'),
         sendChatBtn: document.getElementById('sendChatBtn'),
-        chatToggle: document.getElementById('chatToggle'),
         closeChatBtn: document.getElementById('closeChatBtn'),
         userCursorsContainer: document.getElementById('userCursorsContainer'),
         switchToLogin: document.getElementById('switchToLogin'),
@@ -1138,13 +1137,8 @@
         elements.downloadPDF.addEventListener('click', downloadCanvasPDF);
         
         // Chat
-        elements.chatToggle.addEventListener('click', () => {
-            const isOpen = elements.chatPanel.classList.toggle('open');
-            elements.chatToggle.setAttribute('aria-expanded', isOpen);
-        });
         elements.closeChatBtn.addEventListener('click', () => {
             elements.chatPanel.classList.remove('open');
-            elements.chatToggle.setAttribute('aria-expanded', 'false');
         });
         elements.sendChatBtn.addEventListener('click', sendChatMessage);
         elements.chatInput.addEventListener('keypress', (e) => {

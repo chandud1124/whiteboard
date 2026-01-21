@@ -1919,19 +1919,21 @@ body {
 
 .welcome-btn.guest {
     border-color: #f59e0b;
+    background: white;
 }
 
 .welcome-btn.guest:hover {
     border-color: #f59e0b;
-    background: #fffbeb;
+    background: white;
 }
 
 .welcome-btn.login {
     border-color: var(--color-primary);
+    background: white;
 }
 
 .welcome-btn.login:hover {
-    background: #eff6ff;
+    background: white;
 }
 
 .welcome-btn .btn-icon {
@@ -1943,7 +1945,7 @@ body {
 .welcome-btn .btn-title {
     font-size: 20px;
     font-weight: 600;
-    color: var(--color-text);
+    color: #1f2937;
     margin-bottom: 8px;
     display: block;
 }
