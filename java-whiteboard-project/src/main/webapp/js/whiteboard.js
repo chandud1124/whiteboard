@@ -396,6 +396,9 @@
         // Keyboard shortcuts
         document.addEventListener('keydown', handleKeyboard);
         
+        // Unsaved changes warning
+        window.addEventListener('beforeunload', handleBeforeUnload);
+        
         // Show dashboard if logged in
         if (state.isLoggedIn) {
             // Show dashboard immediately
@@ -407,6 +410,16 @@
                     requestBoardsList();
                 }
             }, 500);
+        }
+    }
+    
+    // Warn user about unsaved changes before leaving
+    function handleBeforeUnload(e) {
+        if (state.hasUnsavedChanges && !state.isLoggedIn) {
+            // Only warn guests - logged in users have auto-save
+            const message = 'You have unsaved changes. Are you sure you want to leave?';
+            e.returnValue = message;
+            return message;
         }
     }
 
@@ -445,6 +458,11 @@
 
         // Show welcome modal if not logged in and no guest session
         if (!sessionStorage.getItem('whiteboard_guest')) {
+            // Hide the main app container
+            const appContainer = document.querySelector('.app-container');
+            if (appContainer) {
+                appContainer.classList.add('hidden');
+            }
             if (welcomeModal) {
                 welcomeModal.classList.remove('hidden');
                 console.log('Welcome modal shown');
@@ -475,6 +493,12 @@
                 // Hide welcome modal immediately
                 if (welcomeModal) {
                     welcomeModal.classList.add('hidden');
+                }
+                
+                // Show the main app container
+                const appContainer = document.querySelector('.app-container');
+                if (appContainer) {
+                    appContainer.classList.remove('hidden');
                 }
                 
                 // Show guest banner
@@ -511,6 +535,12 @@
                 
                 if (welcomeModal) {
                     welcomeModal.classList.add('hidden');
+                }
+                
+                // Show the main app container (needed for login modal to show properly)
+                const appContainer = document.querySelector('.app-container');
+                if (appContainer) {
+                    appContainer.classList.remove('hidden');
                 }
                 
                 // Show login modal
@@ -639,6 +669,11 @@
     }
 
     function showBoardsDashboard() {
+        // Ensure app container is visible
+        const appContainer = document.querySelector('.app-container');
+        if (appContainer) {
+            appContainer.classList.remove('hidden');
+        }
         elements.boardsDashboard.classList.remove('hidden');
         document.body.style.overflow = 'auto';
         requestBoardsList();
@@ -1061,6 +1096,7 @@
         elements.gridToggle.addEventListener('click', () => {
             state.showGrid = !state.showGrid;
             elements.gridToggle.classList.toggle('active', state.showGrid);
+            elements.gridToggle.setAttribute('aria-pressed', state.showGrid);
             redrawCanvas();
         });
         
@@ -1103,10 +1139,12 @@
         
         // Chat
         elements.chatToggle.addEventListener('click', () => {
-            elements.chatPanel.classList.toggle('open');
+            const isOpen = elements.chatPanel.classList.toggle('open');
+            elements.chatToggle.setAttribute('aria-expanded', isOpen);
         });
         elements.closeChatBtn.addEventListener('click', () => {
             elements.chatPanel.classList.remove('open');
+            elements.chatToggle.setAttribute('aria-expanded', 'false');
         });
         elements.sendChatBtn.addEventListener('click', sendChatMessage);
         elements.chatInput.addEventListener('keypress', (e) => {
@@ -1354,7 +1392,75 @@
         }
         
         clearStoredAuth();
-        // Notification will be shown by server response
+        
+        // Also perform local cleanup immediately for better UX
+        // (Server response will confirm, but this ensures UI updates even if connection issues)
+        state.isLoggedIn = false;
+        state.userId = null;
+        state.username = '';
+        state.token = null;
+        state.currentUser = null;
+        state.currentBoardId = null;
+        state.currentBoardTitle = '';
+        state.boards = [];
+        state.hasUnsavedChanges = false;
+        
+        // Clear history
+        state.history = [];
+        state.historyIndex = -1;
+        
+        // Clear canvas
+        state.ctx.fillStyle = '#FFFFFF';
+        state.ctx.fillRect(0, 0, state.canvas.width, state.canvas.height);
+        
+        // Clear room state if in room
+        if (state.isInRoom) {
+            state.isInRoom = false;
+            state.roomCode = null;
+            state.isRoomOwner = false;
+            state.isApproved = false;
+            state.pendingRequests = [];
+            updateRoomUI();
+        }
+        
+        // Stop auto-save
+        if (state.autoSaveIntervalId) {
+            clearInterval(state.autoSaveIntervalId);
+            state.autoSaveIntervalId = null;
+        }
+        
+        // Hide guest banner if visible
+        const guestBanner = document.getElementById('guestBanner');
+        if (guestBanner) {
+            guestBanner.classList.add('hidden');
+        }
+        
+        // Clear guest session flag
+        sessionStorage.removeItem('whiteboard_guest');
+        
+        // Hide dashboard
+        hideBoardsDashboard();
+        
+        // Clean URL (remove any room code parameters)
+        if (window.history && window.history.replaceState) {
+            window.history.replaceState({}, document.title, window.location.pathname);
+        }
+        
+        // Hide the main app container
+        const appContainer = document.querySelector('.app-container');
+        if (appContainer) {
+            appContainer.classList.add('hidden');
+        }
+        
+        // Show welcome modal
+        const welcomeModal = document.getElementById('welcomeModal');
+        if (welcomeModal) {
+            welcomeModal.classList.remove('hidden');
+        }
+        
+        // Update UI
+        updateAuthUI();
+        showNotification('Logged out successfully', 'success');
     }
 
     function showAuthMessage(messageElement, message, type) {
@@ -1500,9 +1606,15 @@
                     sessionStorage.removeItem('whiteboard_guest');
                     
                     // Hide guest banner
-                    const guestBanner = document.getElementById('guestBanner');
-                    if (guestBanner) {
-                        guestBanner.classList.add('hidden');
+                    const guestBannerLogin = document.getElementById('guestBanner');
+                    if (guestBannerLogin) {
+                        guestBannerLogin.classList.add('hidden');
+                    }
+                    
+                    // Ensure app container is visible
+                    const appContainerLogin = document.querySelector('.app-container');
+                    if (appContainerLogin) {
+                        appContainerLogin.classList.remove('hidden');
                     }
                     
                     updateAuthUI();
@@ -1533,13 +1645,18 @@
 
                 case 'sessionRestoreFailed':
                     clearStoredAuth();
-                    showNotification(data.message || 'Session expired. Please log in again.', 'error');
-                    if (elements.loginModal) {
-                        elements.loginModal.classList.remove('hidden');
-                        if (elements.loginUsername) {
-                            elements.loginUsername.focus();
-                        }
+                    
+                    // Hide app container and show welcome modal
+                    const appContainerRestore = document.querySelector('.app-container');
+                    if (appContainerRestore) {
+                        appContainerRestore.classList.add('hidden');
                     }
+                    const welcomeModalRestore = document.getElementById('welcomeModal');
+                    if (welcomeModalRestore) {
+                        welcomeModalRestore.classList.remove('hidden');
+                    }
+                    
+                    showNotification(data.message || 'Session expired. Please log in again.', 'error');
                     break;
                     
                 case 'loginFailed':
@@ -1547,13 +1664,9 @@
                     break;
                     
                 case 'logoutSuccess':
-                    state.isLoggedIn = false;
-                    state.userId = null;
-                    state.username = '';
-                    state.token = null;
-                    state.currentUser = null;
-                    updateAuthUI();
-                    showNotification('Logged out successfully', 'success');
+                    // Logout already handled in handleLogout(), this is just server confirmation
+                    // Don't show duplicate notification since handleLogout() already showed one
+                    console.log('Logout confirmed by server');
                     break;
                 
                 case 'guestModeActivated':
@@ -2762,8 +2875,11 @@
     function selectTool(tool) {
         state.currentTool = tool;
         
-        // Update UI - remove active from all tools
-        document.querySelectorAll('.tool-btn').forEach(btn => btn.classList.remove('active'));
+        // Update UI - remove active from all tools and reset aria-pressed
+        document.querySelectorAll('.tool-btn').forEach(btn => {
+            btn.classList.remove('active');
+            btn.setAttribute('aria-pressed', 'false');
+        });
         
         // Add active to selected tool
         const toolMap = {
@@ -2779,6 +2895,7 @@
         
         if (toolMap[tool]) {
             toolMap[tool].classList.add('active');
+            toolMap[tool].setAttribute('aria-pressed', 'true');
         }
         
         // Update cursor
