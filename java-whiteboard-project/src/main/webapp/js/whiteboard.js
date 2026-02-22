@@ -1779,7 +1779,7 @@
                         break;
                     }
                     state.ctx.fillStyle = data.color;
-                    state.ctx.font = data.size + 'px monospace';
+                    state.ctx.font = data.size + 'px Arial, sans-serif';
                     state.ctx.fillText(data.text, data.x, data.y);
                     break;
                     
@@ -2280,7 +2280,8 @@
     function handleJoinRequest(data) {
         state.pendingRequests.push({
             sessionId: data.sessionId,
-            username: data.username
+            username: data.username,
+            email: data.email || null
         });
         
         updatePendingCount(data.pendingCount);
@@ -2299,7 +2300,11 @@
         }
         
         state.currentRequest = state.pendingRequests.shift();
-        elements.requestUsername.textContent = state.currentRequest.username;
+        let displayText = state.currentRequest.username;
+        if (state.currentRequest.email) {
+            displayText += ' (' + state.currentRequest.email + ')';
+        }
+        elements.requestUsername.textContent = displayText;
         elements.requestModal.classList.remove('hidden');
     }
 
@@ -2812,54 +2817,86 @@
     }
 
     function createTextInput(x, y, screenX, screenY) {
+        // Remove any existing text input
+        const existingInput = document.querySelector('.whiteboard-text-input');
+        if (existingInput) {
+            existingInput.remove();
+        }
+        
         const input = document.createElement('input');
         input.type = 'text';
-        input.style.position = 'absolute';
+        input.className = 'whiteboard-text-input';
+        input.style.position = 'fixed';
         
-        // Position relative to canvas
-        const posX = typeof screenX === 'number' ? screenX : (state.canvas.getBoundingClientRect().left + x * state.zoom);
-        const posY = typeof screenY === 'number' ? screenY : (state.canvas.getBoundingClientRect().top + y * state.zoom);
-        input.style.left = posX + 'px';
-        input.style.top = posY + 'px';
+        // Position relative to canvas with better calculation
+        const canvasRect = state.canvas.getBoundingClientRect();
+        const posX = typeof screenX === 'number' ? screenX : (canvasRect.left + x * state.zoom);
+        const posY = typeof screenY === 'number' ? screenY : (canvasRect.top + y * state.zoom);
         
-        input.style.fontSize = state.strokeWidth * 4 + 'px';
+        input.style.left = Math.max(0, posX) + 'px';
+        input.style.top = Math.max(0, posY) + 'px';
+        
+        // Better styling for visibility
+        const fontSize = Math.max(16, state.strokeWidth * 4);
+        input.style.fontSize = fontSize + 'px';
         input.style.color = state.currentColor;
-        input.style.border = '1px solid #ccc';
-        input.style.backgroundColor = 'rgba(255, 255, 255, 0.9)';
-        input.style.padding = '2px 4px';
-        input.style.minWidth = '100px';
-        input.style.fontFamily = 'monospace';
-        input.style.zIndex = '1000';
+        input.style.border = '2px solid ' + state.currentColor;
+        input.style.backgroundColor = 'rgba(255, 255, 255, 0.95)';
+        input.style.padding = '4px 8px';
+        input.style.minWidth = '150px';
+        input.style.fontFamily = 'Arial, sans-serif';
+        input.style.zIndex = '10000';
+        input.style.outline = 'none';
+        input.style.borderRadius = '3px';
+        input.style.boxShadow = '0 2px 8px rgba(0,0,0,0.2)';
+        input.placeholder = 'Type text here...';
         
         document.body.appendChild(input);
         input.focus();
         
+        let isFinished = false;
         const finishText = () => {
-            if (input.value) {
+            if (isFinished) return;
+            isFinished = true;
+            
+            const text = input.value.trim();
+            if (text) {
                 state.ctx.fillStyle = state.currentColor;
-                state.ctx.font = (state.strokeWidth * 4) + 'px monospace';
-                state.ctx.fillText(input.value, x, y);
+                state.ctx.font = fontSize + 'px Arial, sans-serif';
+                state.ctx.fillText(text, x, y + fontSize * 0.8);
                 
                 sendMessage({
                     type: 'text',
                     x: x,
-                    y: y,
-                    text: input.value,
+                    y: y + fontSize * 0.8,
+                    text: text,
                     color: state.currentColor,
-                    size: state.strokeWidth * 4,
+                    size: fontSize,
                     boardId: state.currentBoardId || null,
                     roomCode: state.roomCode || null,
                     username: state.username || 'Anonymous'
                 });
+                
+                saveHistoryState();
+                markDirty();
             }
-            document.body.removeChild(input);
-            saveHistoryState();
-            markDirty();
+            
+            if (input.parentNode) {
+                input.parentNode.removeChild(input);
+            }
         };
         
         input.addEventListener('blur', finishText);
         input.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') finishText();
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                finishText();
+            } else if (e.key === 'Escape') {
+                isFinished = true;
+                if (input.parentNode) {
+                    input.parentNode.removeChild(input);
+                }
+            }
         });
     }
 

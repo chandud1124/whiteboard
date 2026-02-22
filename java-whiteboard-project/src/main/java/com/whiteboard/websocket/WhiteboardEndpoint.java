@@ -820,11 +820,25 @@ public class WhiteboardEndpoint {
     private void handleJoinRoom(String message, Session session) {
         String roomCode = extractField(message, "roomCode");
         String username = extractField(message, "username");
+        String email = null;
 
         if (username == null || username.isEmpty()) {
             String mappedUsername = sessionToUsername.get(session.getId());
             if (mappedUsername != null && !mappedUsername.isEmpty()) {
                 username = mappedUsername;
+            }
+        }
+        
+        // Try to get user email if user is logged in
+        Long userId = sessionToUser.get(session.getId());
+        if (userId != null) {
+            Optional<User> userOpt = userDAO.findById(userId);
+            if (userOpt.isPresent()) {
+                User user = userOpt.get();
+                email = user.getEmail();
+                if (username == null || username.isEmpty()) {
+                    username = user.getUsername();
+                }
             }
         }
         
@@ -856,16 +870,27 @@ public class WhiteboardEndpoint {
             // Notify room owner about the pending request
             Session ownerSession = room.getOwnerSession();
             if (ownerSession != null && ownerSession.isOpen()) {
-                String pendingRequest = String.format(
-                    "{\"type\":\"joinRequest\",\"sessionId\":\"%s\",\"username\":\"%s\",\"pendingCount\":%d}",
-                    session.getId(),
-                    username != null ? username : "Anonymous",
-                    room.getPendingCount()
-                );
+                String pendingRequest;
+                if (email != null && !email.isEmpty()) {
+                    pendingRequest = String.format(
+                        "{\"type\":\"joinRequest\",\"sessionId\":\"%s\",\"username\":\"%s\",\"email\":\"%s\",\"pendingCount\":%d}",
+                        session.getId(),
+                        username != null ? username : "Anonymous",
+                        email,
+                        room.getPendingCount()
+                    );
+                } else {
+                    pendingRequest = String.format(
+                        "{\"type\":\"joinRequest\",\"sessionId\":\"%s\",\"username\":\"%s\",\"pendingCount\":%d}",
+                        session.getId(),
+                        username != null ? username : "Anonymous",
+                        room.getPendingCount()
+                    );
+                }
                 ownerSession.getBasicRemote().sendText(pendingRequest);
             }
             
-            System.out.println("Join request for room " + roomCode + " from " + session.getId() + " (" + username + ")");
+            System.out.println("Join request for room " + roomCode + " from " + session.getId() + " (" + username + ", " + email + ")");
             
         } catch (IOException e) {
             System.err.println("Error handling join room: " + e.getMessage());
